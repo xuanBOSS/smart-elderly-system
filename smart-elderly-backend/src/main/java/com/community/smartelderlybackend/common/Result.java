@@ -3,7 +3,7 @@ package com.community.smartelderlybackend.common;
 import lombok.Data;
 
 /**
- * 后端统一返回结果集（万能包装盒）
+ * 全局统一返回结果类
  */
 @Data
 public class Result<T> {
