@@ -3,6 +3,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 
@@ -11,12 +12,48 @@ const username = ref('')
 const password = ref('')
 const role = ref('')
 
-const enterSystem = () => {
+const getRoleNumber = (roleValue) => {
+  const roleMap = {
+    'elderly': 0,   // 老人
+    'family': 1,    // 家属
+    'doctor': 2,    // 医生
+    'admin': 3      // 社区
+  }
+  return roleMap[roleValue] || 0
+}
+
+const enterSystem = async () => {
   if (!role.value) {
     ElMessage.warning('请选择登录角色')
     return
   }
-  router.push(`/${role.value}`)
+
+  try {
+    const response = await axios.post('/api/user/login', {
+      username: username.value,
+      password: password.value,
+      role: getRoleNumber(role.value)
+    })
+    
+    const { code, message, data } = response.data || {}
+    
+    if (code === 200 && data && data.role !== undefined) {
+      // 登录成功：显示成功消息并跳转
+      ElMessage.success('登录成功，正在跳转...')
+      const roleMap = ['elderly', 'family', 'doctor', 'admin']
+      
+      //如果后端返回200但角色值不为0-3，则默认跳转到老人界面（保持程序健壮性）
+      const roleName = roleMap[data.role] || 'elderly'
+      router.push(`/${roleName}`)
+    } else {
+      // 登录失败：显示错误消息
+      ElMessage.error(message || '登录失败，请检查账号密码和角色')
+    }
+  } catch (error) {
+    // 网络错误或服务器错误
+    const msg = error.response?.data?.message || error.message || '登录请求失败，请稍后重试'
+    ElMessage.error(msg)
+  }
 }
 </script>
 
