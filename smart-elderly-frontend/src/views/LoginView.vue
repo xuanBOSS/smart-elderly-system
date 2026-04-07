@@ -29,7 +29,8 @@ const enterSystem = async () => {
   }
 
   try {
-    const response = await axios.post('/api/user/login', {
+    // 🌟加上完整的后端地址 8080，解决 404 报错
+    const response = await axios.post('http://localhost:8080/api/user/login', {
       username: username.value,
       password: password.value,
       role: getRoleNumber(role.value)
@@ -38,6 +39,12 @@ const enterSystem = async () => {
     const { code, message, data } = response.data || {}
     
     if (code === 200 && data && data.role !== undefined) {
+      
+      // 🌟把后端的 Token 存入本地缓存
+      if (data.token) {
+        localStorage.setItem('token', data.token)
+      }
+
       // 登录成功：显示成功消息并跳转
       ElMessage.success('登录成功，正在跳转...')
       const roleMap = ['elderly', 'family', 'doctor', 'admin']
