@@ -1,19 +1,3 @@
-/*
- Navicat Premium Data Transfer
-
- Source Server         : local
- Source Server Type    : MySQL
- Source Server Version : 90600 (9.6.0)
- Source Host           : localhost:3306
- Source Schema         : smart_elderly_db
-
- Target Server Type    : MySQL
- Target Server Version : 90600 (9.6.0)
- File Encoding         : 65001
-
- Date: 03/04/2026 21:36:55
-*/
-
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
@@ -35,8 +19,29 @@ CREATE TABLE `appointment`  (
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '预约记录表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
--- Records of appointment
+-- Records of appointment  ✔✔✔ 数据放在表后面才会执行！
 -- ----------------------------
+INSERT INTO `appointment` VALUES 
+(1, 1021, 1001, '2026-04-04 09:00:00', 1),
+(2, 1022, 1002, '2026-04-04 14:30:00', 1),
+(3, 1023, 1003, '2026-04-05 08:30:00', 1),
+(4, 1024, 1001, '2026-04-05 15:00:00', 0),
+(5, 1025, 1004, '2026-04-06 09:00:00', 1),
+(6, 1026, 1002, '2026-04-06 16:00:00', 2),
+(7, 1027, 1005, '2026-04-07 08:30:00', 1),
+(8, 1028, 1001, '2026-04-07 10:00:00', 0),
+(9, 1029, 1006, '2026-04-08 09:30:00', 1),
+(10, 1030, 1003, '2026-04-08 14:00:00', 1),
+(11, 1031, 1007, '2026-04-09 08:30:00', 0),
+(12, 1032, 1008, '2026-04-09 15:30:00', 1),
+(13, 1033, 1009, '2026-04-10 09:00:00', 1),
+(14, 1034, 1010, '2026-04-10 16:30:00', 2),
+(15, 1035, 1004, '2026-04-11 08:30:00', 0),
+(16, 1036, 1005, '2026-04-11 10:30:00', 1),
+(17, 1037, 1006, '2026-04-12 09:00:00', 1),
+(18, 1038, 1002, '2026-04-12 14:30:00', 0),
+(19, 1039, 1001, '2026-04-13 08:30:00', 1),
+(20, 1040, 1007, '2026-04-13 15:00:00', 1);
 
 -- ----------------------------
 -- Table structure for doctor_schedule
@@ -125,6 +130,18 @@ CREATE TABLE `emergency_record`  (
 -- ----------------------------
 -- Records of emergency_record
 -- ----------------------------
+INSERT INTO `emergency_record` VALUES (1, 1021, '2026-04-03 08:20:15', '小区3号楼2单元501室', 3, '老人头晕，家属已到家照顾，无大碍');
+INSERT INTO `emergency_record` VALUES (2, 1024, '2026-04-03 09:10:30', '社区活动中心', 2, '血糖偏高，社区工作人员协助服药并联系家属');
+INSERT INTO `emergency_record` VALUES (3, 1028, '2026-04-03 10:05:22', '家中客厅', 1, '胸闷不适，家属紧急处理后送往医院');
+INSERT INTO `emergency_record` VALUES (4, 1032, '2026-04-03 11:30:45', '小区花园长椅', 3, '轻微摔倒，无外伤，社区已送回家并通知家属');
+INSERT INTO `emergency_record` VALUES (5, 1035, '2026-04-03 14:12:18', '家中卧室', 2, '心率过快，社区上门监测后恢复正常');
+INSERT INTO `emergency_record` VALUES (6, 1040, '2026-04-03 15:45:33', '小区门口便利店旁', 1, '低血糖头晕，家属及时赶到喂食糖果缓解');
+INSERT INTO `emergency_record` VALUES (7, 1042, '2026-04-03 16:28:10', '家中厨房', 3, '忘记关火触发报警，社区上门处理，无危险');
+INSERT INTO `emergency_record` VALUES (8, 1022, '2026-04-03 17:15:52', '小区健身区', 2, '运动后头晕，休息片刻恢复，已通知家属');
+INSERT INTO `emergency_record` VALUES (9, 1038, '2026-04-03 18:40:37', '家中', 1, '血压骤升，家属陪同前往医院就诊');
+INSERT INTO `emergency_record` VALUES (10, 1048, '2026-04-03 19:05:11', '小区楼道内', 3, '行走不慎滑倒，社区协助回家，无受伤');
+INSERT INTO `emergency_record` VALUES (11, 1025, '2026-04-03 20:30:08', '家中', 0, '身体不适按求助键，等待家属响应');
+INSERT INTO `emergency_record` VALUES (12, 1030, '2026-04-03 21:15:42', '家中', 0, '夜间心慌求助，待处理');
 
 -- ----------------------------
 -- Table structure for family_bind
@@ -204,10 +221,10 @@ DROP TABLE IF EXISTS `health_records`;
 CREATE TABLE `health_records`  (
   `record_id` bigint NOT NULL AUTO_INCREMENT COMMENT '记录唯一标识',
   `user_id` bigint NULL DEFAULT NULL COMMENT '所属用户ID(老人)',
-  `blood_pressure_high` float(4, 1) NULL DEFAULT NULL COMMENT '收缩压(高压)',
-  `blood_pressure_low` float(4, 1) NULL DEFAULT NULL COMMENT '舒张压(低压)',
+  `blood_pressure_high` float(4,1) NULL DEFAULT NULL COMMENT '收缩压(高压)',
+  `blood_pressure_low` float(4,1) NULL DEFAULT NULL COMMENT '舒张压(低压)',
   `heart_rate` int NULL DEFAULT NULL COMMENT '心率',
-  `blood_sugar` float(4, 1) NULL DEFAULT NULL COMMENT '血糖',
+  `blood_sugar` float(4,1) NULL DEFAULT NULL COMMENT '血糖',
   `medication_info` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL COMMENT '用药信息(用于语音播报)',
   `record_time` datetime NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录时间',
   PRIMARY KEY (`record_id`) USING BTREE,
