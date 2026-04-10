@@ -4,13 +4,21 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import request from '@/utils/request'
 
 const router = useRouter()
-const selectedName = ref('王大爷')
 const chartRef = ref(null)
 let chartInstance = null
 
-const customerList = ['王大爷', '李奶奶']
+const customerList = ref([])
+const selectedElderId = ref(null)
+const noticeList = ref([])
+const indicatorList = ref([
+  { label: '--/--', unit: 'mmHg', name: '收缩压/舒张压', color: '#FF4D4F' },
+  { label: '--', unit: '次/分', name: '心率', color: '#52C41A' },
+  { label: '--', unit: 'mmol/L', name: '血糖', color: '#1890FF' }
+])
 
 const initChart = () => {
   if (!chartRef.value) return
@@ -44,20 +52,93 @@ const initChart = () => {
   })
 }
 
+const updateChart = (trend) => {
+  if (!chartInstance) return
+  chartInstance.setOption({
+    xAxis: { data: trend?.dates || [] },
+    series: [
+      { name: '收缩压', data: trend?.systolic || [] },
+      { name: '舒张压', data: trend?.diastolic || [] },
+      { name: '心率', data: trend?.heartRate || [] }
+    ]
+  })
+}
+
+const fetchElders = async () => {
+  try {
+    const response = await request.get('/api/family/elders')
+    const { code, message, data } = response.data
+    if (code !== 200) {
+      ElMessage.error(message || '获取老人列表失败')
+      return
+    }
+    customerList.value = Array.isArray(data) ? data : []
+    if (customerList.value.length > 0) {
+      handleSelectElder(customerList.value[0].elderId)
+    } else {
+      selectedElderId.value = null
+      updateChart({ dates: [], systolic: [], diastolic: [], heartRate: [] })
+      noticeList.value = []
+    }
+  } catch (error) {
+    console.error('获取老人列表失败:', error)
+    ElMessage.error('获取老人列表失败')
+  }
+}
+
+const fetchDashboard = async (elderId) => {
+  try {
+    const response = await request.get(`/api/health/dashboard?elderId=${elderId}`)
+    const { code, message, data } = response.data
+    if (code !== 200) {
+      ElMessage.error(message || '获取健康大盘失败')
+      return
+    }
+    const trend = data?.trend || {}
+    const latest = data?.latest || {}
+    indicatorList.value[0].label = latest.bloodPressure || '--/--'
+    indicatorList.value[1].label = latest.heartRate || '--'
+    indicatorList.value[2].label = latest.bloodSugar || '--'
+    updateChart(trend)
+  } catch (error) {
+    console.error('获取健康大盘失败:', error)
+    ElMessage.error('获取健康大盘失败')
+  }
+}
+
+const fetchNotices = async (elderId) => {
+  try {
+    const response = await request.get(`/api/message/list?elderId=${elderId}`)
+    const { code, message, data } = response.data
+    if (code !== 200) {
+      ElMessage.error(message || '获取消息失败')
+      return
+    }
+    noticeList.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error('获取消息失败:', error)
+    ElMessage.error('获取消息失败')
+  }
+}
+
+const handleSelectElder = (elderId) => {
+  selectedElderId.value = elderId
+  fetchDashboard(elderId)
+  fetchNotices(elderId)
+}
+
 const resizeChart = () => {
   chartInstance?.resize()
 }
 
-const goLogin = () => router.push('/login')
-
-const indicatorList = [
-  { label: '137/87', unit: 'mmHg', name: '收缩压/舒张压', color: '#FF4D4F' },
-  { label: '71', unit: '次/分', name: '心率', color: '#52C41A' },
-  { label: '5.8', unit: 'mmol/L', name: '血糖', color: '#1890FF' }
-]
+const goLogin = () => {
+  localStorage.removeItem('token')
+  router.push('/login')
+}
 
 onMounted(() => {
   initChart()
+  fetchElders()
   window.addEventListener('resize', resizeChart)
 })
 
@@ -76,12 +157,12 @@ onUnmounted(() => {
 
     <div class="customer-tabs">
       <button
-        v-for="name in customerList"
-        :key="name"
-        :class="['customer-tab', { active: selectedName === name }]"
-        @click="selectedName = name"
+        v-for="item in customerList"
+        :key="item.elderId"
+        :class="['customer-tab', { active: selectedElderId === item.elderId }]"
+        @click="handleSelectElder(item.elderId)"
       >
-        {{ name }}
+        {{ item.name }}
       </button>
     </div>
 
@@ -102,25 +183,28 @@ onUnmounted(() => {
 
     <el-card class="notice-card" shadow="never">
       <div class="section-title">消息通知</div>
-      <div class="notice-item notice-urgent">
-        <span class="notice-dot notice-dot-red"></span>
+      <el-empty v-if="noticeList.length === 0" description="暂无新消息" :image-size="60" />
+      <div
+        v-for="(notice, index) in noticeList"
+        v-else
+        :key="notice.id"
+        class="notice-item"
+        :class="{
+          'notice-urgent': notice.type === 'URGENT',
+          'notice-last': index === noticeList.length - 1
+        }"
+      >
+        <span
+          class="notice-dot"
+          :class="{
+            'notice-dot-red': notice.type === 'URGENT',
+            'notice-dot-blue': notice.type === 'INFO',
+            'notice-dot-orange': notice.type === 'WARNING'
+          }"
+        ></span>
         <div class="notice-content">
-          <div class="notice-text">王大爷触发了紧急求助</div>
-          <div class="notice-time">14:30</div>
-        </div>
-      </div>
-      <div class="notice-item">
-        <span class="notice-dot notice-dot-blue"></span>
-        <div class="notice-content">
-          <div class="notice-text">门诊预约已确认（李医生 12/22）</div>
-          <div class="notice-time">10:15</div>
-        </div>
-      </div>
-      <div class="notice-item notice-last">
-        <span class="notice-dot notice-dot-orange"></span>
-        <div class="notice-content">
-          <div class="notice-text">血压偏高预警提醒</div>
-          <div class="notice-time">昨天</div>
+          <div class="notice-text">{{ notice.content }}</div>
+          <div class="notice-time">{{ notice.time }}</div>
         </div>
       </div>
     </el-card>
