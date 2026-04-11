@@ -20,6 +20,11 @@ const indicatorList = ref([
   { label: '--', unit: 'mmol/L', name: '血糖', color: '#1890FF' }
 ])
 
+// 新增：绑定功能的响应式变量
+const showBindDialog = ref(false)
+const bindLoading = ref(false)
+const bindForm = ref({ username: '', relation: '' })
+
 const initChart = () => {
   if (!chartRef.value) return
   chartInstance = echarts.init(chartRef.value)
@@ -127,6 +132,31 @@ const handleSelectElder = (elderId) => {
   fetchNotices(elderId)
 }
 
+// 新增：提交绑定老人的请求逻辑
+const submitBind = async () => {
+  if (!bindForm.value.username || !bindForm.value.relation) {
+    ElMessage.warning('请完整填写账号和亲属关系')
+    return
+  }
+  bindLoading.value = true
+  try {
+    const res = await request.post('/api/family/bind', bindForm.value)
+    if (res.data.code === 200) {
+      ElMessage.success('绑定成功！')
+      showBindDialog.value = false
+      bindForm.value = { username: '', relation: '' } // 清空表单
+      fetchElders() // 重新拉取顶部标签列表
+    } else {
+      ElMessage.error(res.data.message || '绑定失败')
+    }
+  } catch (error) {
+    console.error('绑定请求异常:', error)
+    ElMessage.error('网络或服务器异常，绑定失败')
+  } finally {
+    bindLoading.value = false
+  }
+}
+
 const resizeChart = () => {
   chartInstance?.resize()
 }
@@ -163,6 +193,10 @@ onUnmounted(() => {
         @click="handleSelectElder(item.elderId)"
       >
         {{ item.name }}
+      </button>
+
+      <button class="customer-tab add-btn" @click="showBindDialog = true">
+        + 添加
       </button>
     </div>
 
@@ -208,6 +242,25 @@ onUnmounted(() => {
         </div>
       </div>
     </el-card>
+
+    <el-dialog v-model="showBindDialog" title="绑定老人" width="320px" center>
+      <el-form label-position="top">
+        <el-form-item label="老人登录账号 (如: laowang)">
+          <el-input v-model="bindForm.username" placeholder="请输入老人的账号" clearable />
+        </el-form-item>
+        <el-form-item label="您与老人的关系">
+          <el-input v-model="bindForm.relation" placeholder="如：父子 / 母女" clearable />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="showBindDialog = false">取消</el-button>
+          <el-button type="primary" :loading="bindLoading" @click="submitBind">
+            确认绑定
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -241,6 +294,7 @@ onUnmounted(() => {
 
 .customer-tabs {
   display: flex;
+  flex-wrap: wrap; /* 增加换行，防止绑定的老人太多挤出去 */
   gap: 12px;
   background: #fff;
   padding: 12px 20px 20px;
@@ -259,6 +313,13 @@ onUnmounted(() => {
 .customer-tab.active {
   background: #1890ff;
   color: #fff;
+}
+
+/* 新增：添加按钮的样式微调 */
+.add-btn {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1px dashed #91d5ff;
 }
 
 .trend-card,
@@ -326,6 +387,7 @@ onUnmounted(() => {
   height: 10px;
   border-radius: 50%;
   margin-right: 12px;
+  flex-shrink: 0;
 }
 
 .notice-dot-red { background: #ff4d4f; }
@@ -350,5 +412,14 @@ onUnmounted(() => {
 .notice-time {
   font-size: 12px;
   color: #909399;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+/* 弹窗底部按钮居中 */
+.dialog-footer {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
 }
 </style>

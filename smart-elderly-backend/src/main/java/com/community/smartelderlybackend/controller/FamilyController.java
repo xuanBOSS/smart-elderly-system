@@ -94,6 +94,40 @@ public class FamilyController {
         return Result.success(finalData);
     }
 
+    //新增：绑定老人功能
+    @PostMapping("/bind")
+    @Operation(summary = "绑定新老人")
+    public Result<String> bindElder(@RequestBody Map<String, String> params, HttpServletRequest request) {
+        Long familyId = Long.valueOf(request.getAttribute("userId").toString());
+        String elderUsername = params.get("username");
+        String relation = params.get("relation");
+
+        // 1. 校验老人账号是否存在且角色为老人(role=0)
+        User elder = userMapper.selectOne(new LambdaQueryWrapper<User>()
+                .eq(User::getUsername, elderUsername)
+                .eq(User::getRole, 0));
+        if (elder == null) {
+            return Result.error("未找到该老人账号，请检查输入");
+        }
+
+        // 2. 校验是否已经绑定过该老人
+        Long count = familyBindMapper.selectCount(new LambdaQueryWrapper<FamilyBind>()
+                .eq(FamilyBind::getFamilyId, familyId)
+                .eq(FamilyBind::getElderId, elder.getUserId()));
+        if (count > 0) {
+            return Result.error("您已绑定过该老人，请勿重复操作");
+        }
+
+        // 3. 执行绑定插入
+        FamilyBind bind = new FamilyBind();
+        bind.setFamilyId(familyId);
+        bind.setElderId(elder.getUserId());
+        bind.setRelation(relation);
+        familyBindMapper.insert(bind);
+
+        return Result.success("绑定成功");
+    }
+
     private Map<String, Object> buildEmptyDashboard() {
         Map<String, Object> trend = new HashMap<>();
         trend.put("dates", new ArrayList<>());
