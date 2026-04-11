@@ -1,42 +1,108 @@
-# DoctorDashboard.vue - 医生界面，预约管理界面组件
-
 <script setup>
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
+import request from '@/utils/request' // 🌟 引入咱们的网络大总管
 
-const schedule = [
-  { day: '周一', value: '上午 ✓' },
-  { day: '周二', value: '全天 ✓' },
+const router = useRouter()
+
+const schedule = ref([
+  { day: '周一', value: '' },
+  { day: '周二', value: '' },
   { day: '周三', value: '' },
-  { day: '周四', value: '下午 ✓' },
-  { day: '周五', value: '上午 ✓' },
+  { day: '周四', value: '' },
+  { day: '周五', value: '' },
   { day: '周六', value: '' },
   { day: '周日', value: '' }
-]
+])
 
-const appointments = [
-  { name: '王大爷', time: '12/22 上午09:00', type: '门诊', status: '待确认' },
-  { name: '李奶奶', time: '12/22 下午14:00', type: '上门', status: '待确认' },
-  { name: '张大爷', time: '12/23 上午10:00', type: '门诊', status: '待确认' }
-]
+// 动态绑定的预约列表数据
+const appointments = ref([])
+const loading = ref(false) // 控制表格的加载动画
 
-const confirmAppointment = () => {
-  ElMessage.success('操作成功')
+// 1. 获取待处理预约列表
+const fetchAppointments = async () => {
+  loading.value = true
+  try {
+    const res = await request.get('/api/doctor/appointments/pending')
+    if (res.data.code === 200) {
+      appointments.value = res.data.data
+    } else {
+      ElMessage.error(res.data.message || '获取预约列表失败')
+    }
+  } catch (error) {
+    console.error('获取预约异常:', error)
+    ElMessage.error('网络异常，无法获取预约数据')
+  } finally {
+    loading.value = false
+  }
 }
 
-
-const goLogin = () => router.push('/login')
-
-const rejectAppointment = () => {
-  ElMessage.success('操作成功')
+// 新增：获取我的排班，并自动填入顶部的 7 天网格中！
+const fetchScheduleGrid = async () => {
+  try {
+    const res = await request.get('/api/doctor/schedule')
+    if (res.data.code === 200) {
+      const apiData = res.data.data // 后端返回的真实排班
+      
+      // 遍历后端数据，拼装“上午/下午/全天”
+      apiData.forEach(apiItem => {
+        // 找到我们格子里对应的那一天（比如找到 '周二'）
+        const target = schedule.value.find(s => s.day === apiItem.day)
+        if (target) {
+          const isAm = apiItem.time.includes('上午')
+          const str = isAm ? '上午 ✓' : '下午 ✓'
+          
+          if (target.value === '') {
+            target.value = str // 如果是空的，直接填入
+          } else if (target.value !== str) {
+            target.value = '全天 ✓' // 如果原本有上午，新来个下午，就变成全天
+          }
+        }
+      })
+    }
+  } catch (error) {
+    console.error('获取排班异常', error)
+  }
 }
+
+// 处理确认/拒绝
+const handleAppointment = async (appointId, action) => {
+  const actionText = action === 1 ? '确认' : '拒绝'
+  try {
+    await ElMessageBox.confirm(`您确定要${actionText}该患者的预约吗？`, '操作提示', {
+      type: action === 1 ? 'success' : 'warning',
+    })
+
+    const res = await request.post(`/api/doctor/appointments/handle?appointId=${appointId}&action=${action}`)
+    
+    if (res.data.code === 200) {
+      ElMessage.success(res.data.data)
+      fetchAppointments() // 重新刷表格
+      fetchScheduleGrid() // 🌟 如果确认了，排班进度也会变，顺手也刷一下顶部！
+    } else {
+      ElMessage.error(res.data.message)
+    }
+  } catch (cancel) {}
+}
+
+const goLogin = () => {
+  localStorage.removeItem('token')
+  router.push('/login')
+}
+
+// 页面加载时自动去拿数据
+onMounted(() => {
+  fetchAppointments()
+  fetchScheduleGrid()
+})
 </script>
 
 <template>
   <div class="doctor-dashboard">
     <div class="doctor-topbar">
       <div class="page-title">患者预约大厅</div>
-      <div class="page-date">2024年12月20日 星期五</div>
+      <div class="page-date">2026年04月11日 星期六</div> 
     </div>
 
     <section class="schedule-card">
@@ -53,23 +119,27 @@ const rejectAppointment = () => {
 
     <section class="appointment-card">
       <div class="section-title">
-        待处理预约 <span class="appointment-count">（3）</span>
+        待处理预约 <span class="appointment-count">（{{ appointments.length }}）</span>
       </div>
-      <el-table :data="appointments" stripe border style="width: 100%;">
+      
+      <el-table :data="appointments" stripe border style="width: 100%;" v-loading="loading">
         <el-table-column prop="name" label="患者姓名" width="120" />
         <el-table-column prop="time" label="预约时间" width="180" />
         <el-table-column prop="type" label="预约类型" width="120" />
         <el-table-column prop="status" label="状态" width="100" />
         <el-table-column label="操作">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="confirmAppointment">确认</el-button>
-            <el-button size="small" type="danger" plain @click="rejectAppointment">拒绝</el-button>
+            <el-button size="small" type="primary" @click="handleAppointment(row.appointId, 1)">确认</el-button>
+            <el-button size="small" type="danger" plain @click="handleAppointment(row.appointId, 2)">拒绝</el-button>
           </template>
         </el-table-column>
+        
+        <template #empty>
+          <el-empty description="太棒了，所有预约都已处理完毕！" />
+        </template>
       </el-table>
     </section>
   </div>
-  <el-button class="exit-button" type="text" @click="goLogin">退出</el-button>
 </template>
 
 <style scoped>

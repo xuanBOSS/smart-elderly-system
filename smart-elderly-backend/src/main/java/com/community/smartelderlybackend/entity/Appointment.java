@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
-
 import java.time.LocalDateTime;
 
 @Data
@@ -12,8 +11,8 @@ import java.time.LocalDateTime;
 public class Appointment {
     @TableId(type = IdType.AUTO)
     private Long appointId;
-    private Long userId;
-    private Long doctorId;
+    private Long userId; // 患者(老人)ID
+    private Long doctorId; // 医生ID
     private LocalDateTime appointTime;
-    private Integer status;
+    private Integer status; // 0待处理, 1已确认, 2已取消/拒绝
 }

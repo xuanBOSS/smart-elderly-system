@@ -1,20 +1,36 @@
 # ScheduleView.vue - 医生界面，查看排班计划的组件
-
 <script setup>
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import request from '@/utils/request'
 
 const router = useRouter()
 const goBack = () => router.push('/doctor')
 
-const scheduleItems = [
-  { day: '周一', time: '上午 09:00 - 12:00', note: '门诊接诊' },
-  { day: '周二', time: '全天', note: '预约手术' },
-  { day: '周三', time: '无排班', note: '休息日' },
-  { day: '周四', time: '下午 13:00 - 17:00', note: '上门随访' },
-  { day: '周五', time: '上午 09:00 - 12:00', note: '门诊接诊' },
-  { day: '周六', time: '无排班', note: '值班待命' },
-  { day: '周日', time: '无排班', note: '休息日' }
-]
+const scheduleItems = ref([])
+const loading = ref(false)
+
+const fetchSchedule = async () => {
+  loading.value = true
+  try {
+    const res = await request.get('/api/doctor/schedule')
+    if (res.data.code === 200) {
+      scheduleItems.value = res.data.data
+    } else {
+      ElMessage.error(res.data.message || '获取排班失败')
+    }
+  } catch (error) {
+    console.error('获取排班异常:', error)
+    ElMessage.error('网络异常')
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchSchedule()
+})
 </script>
 
 <template>
@@ -27,12 +43,14 @@ const scheduleItems = [
       <el-button type="primary" @click="goBack">返回预约大厅</el-button>
     </div>
 
-    <el-card class="schedule-card" shadow="hover">
-      <div class="schedule-row" v-for="item in scheduleItems" :key="item.day">
+    <el-card class="schedule-card" shadow="hover" v-loading="loading">
+      <el-empty v-if="scheduleItems.length === 0" description="您近期暂无排班安排" />
+      
+      <div class="schedule-row" v-for="(item, index) in scheduleItems" :key="index">
         <div class="schedule-day">{{ item.day }}</div>
-        <div>
+        <div class="schedule-info">
           <div class="schedule-time">{{ item.time }}</div>
-          <div class="schedule-note">{{ item.note }}</div>
+          <div class="schedule-note" :class="{'full-booked': item.note.includes('满')}">{{ item.note }}</div>
         </div>
       </div>
     </el-card>
@@ -75,7 +93,6 @@ const scheduleItems = [
 
 .schedule-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   padding: 18px 0;
   border-bottom: 1px solid #f2f3f5;
@@ -87,13 +104,18 @@ const scheduleItems = [
 
 .schedule-day {
   width: 100px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  color: #303133;
+  color: #1890ff; /* 高亮显示星期 */
+}
+
+.schedule-info {
+  flex: 1;
 }
 
 .schedule-time {
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 500;
   color: #303133;
 }
 
@@ -101,5 +123,11 @@ const scheduleItems = [
   margin-top: 6px;
   font-size: 13px;
   color: #909399;
+}
+
+/* 如果号源满了，可以扩展个标红样式 */
+.full-booked {
+  color: #ff4d4f;
+  font-weight: bold;
 }
 </style>
