@@ -4,18 +4,31 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import request from '@/utils/request'
 
 const router = useRouter()
 const timeText = ref('00:00:00')
 const chartRef = ref(null)
 let chartInstance = null
 
+// 响应式数据源
+const stats = ref({
+  totalElders: 0,
+  chronicElders: 0,
+  todayAppointments: 0,
+  monthlyEmergencies: 0
+})
+const orderList = ref([])
+
+// 时间更新逻辑
 const updateTime = () => {
   const now = new Date()
   const pad = (num) => `${num}`.padStart(2, '0')
   timeText.value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
 }
 
+// 初始化空图表
 const initChart = () => {
   if (!chartRef.value) return
   chartInstance = echarts.init(chartRef.value)
@@ -32,30 +45,87 @@ const initChart = () => {
     },
     yAxis: {
       type: 'category',
-      data: ['高血压', '糖尿病', '关节炎', '冠心病'],
+      data: [], // 等待后端数据
       axisLine: { lineStyle: { color: 'rgba(255,255,255,0.3)' } },
       axisLabel: { color: '#fff' },
       axisTick: { show: false }
     },
     series: [{
       type: 'bar',
-      data: [186, 98, 72, 67],
+      data: [], // 等待后端数据
       barWidth: 16,
       label: { show: true, position: 'right', color: '#fff' }
     }]
   })
 }
 
+//1. 获取左侧统计大盘数据
+const fetchStatistics = async () => {
+  try {
+    const res = await request.get('/api/community/statistics')
+    if (res.data.code === 200) {
+      const data = res.data.data
+      stats.value.totalElders = data.totalElders || 0
+      stats.value.chronicElders = data.chronicElders || 0
+      stats.value.todayAppointments = data.todayAppointments || 0
+      stats.value.monthlyEmergencies = data.monthlyEmergencies || 0
+      
+      // 更新 Echarts 柱状图
+      if (chartInstance && data.diseaseChart) {
+        chartInstance.setOption({
+          yAxis: { data: data.diseaseChart.labels },
+          series: [{ data: data.diseaseChart.values }]
+        })
+      }
+    }
+  } catch (error) {
+    console.error('获取统计大盘失败', error)
+  }
+}
+
+//2. 获取右侧实时工单列表
+const fetchEmergencies = async () => {
+  try {
+    const res = await request.get('/api/community/emergencies')
+    if (res.data.code === 200) {
+      orderList.value = res.data.data || []
+    }
+  } catch (error) {
+    console.error('获取紧急工单失败', error)
+  }
+}
+
+//3. 处理紧急工单（网格员接单/解决）
+const handleOrder = async (helpId, action) => {
+  try {
+    const res = await request.post(`/api/community/emergency/handle?helpId=${helpId}&action=${action}`)
+    if (res.data.code === 200) {
+      ElMessage.success(action === 2 ? '已接单，请尽快上门处理' : '问题已解决，工单归档')
+      fetchEmergencies() // 重新刷新工单列表
+    } else {
+      ElMessage.error(res.data.message || '操作失败')
+    }
+  } catch (error) {
+    console.error('工单处理异常', error)
+    ElMessage.error('网络异常')
+  }
+}
+
 const resizeChart = () => {
   chartInstance?.resize()
 }
 
-const goLogin = () => router.push('/login')
+const goLogin = () => {
+  localStorage.removeItem('token')
+  router.push('/login')
+}
 
 onMounted(() => {
   updateTime()
   const timer = setInterval(updateTime, 1000)
   initChart()
+  fetchStatistics()
+  fetchEmergencies()
   window.addEventListener('resize', resizeChart)
   onUnmounted(() => {
     clearInterval(timer)
@@ -74,23 +144,23 @@ onUnmounted(() => {
       <div class="side-label">数据概览</div>
       <div class="stat-card">
         <div class="stat-title">社区老年人口</div>
-        <div class="stat-value">1,286</div>
-        <div class="stat-trend">+12 本月新增</div>
+        <div class="stat-value">{{ stats.totalElders }}</div>
+        <div class="stat-trend">实时核准</div>
       </div>
       <div class="stat-card">
         <div class="stat-title">慢病管理人数</div>
-        <div class="stat-value">423</div>
-        <div class="stat-trend">+8 本月新增</div>
+        <div class="stat-value">{{ stats.chronicElders }}</div>
+        <div class="stat-trend">高危人群监测中</div>
       </div>
       <div class="stat-card">
         <div class="stat-title">今日门诊预约</div>
-        <div class="stat-value">47</div>
-        <div class="stat-trend">+3 本日新增</div>
+        <div class="stat-value">{{ stats.todayAppointments }}</div>
+        <div class="stat-trend">系统实时同步</div>
       </div>
       <div class="stat-card">
         <div class="stat-title">紧急求助（本月）</div>
-        <div class="stat-value">8</div>
-        <div class="stat-trend">-1 环比</div>
+        <div class="stat-value">{{ stats.monthlyEmergencies }}</div>
+        <div class="stat-trend">含误触记录</div>
       </div>
       <div class="chart-panel">
         <div class="chart-title">慢病类型分布</div>
@@ -112,49 +182,45 @@ onUnmounted(() => {
             </div>
           </template>
         </div>
-        <div class="map-note">模拟演示 · 3栋触发紧急求助</div>
+        <div class="map-note">演示状态 · 3栋区域状态异常</div>
       </div>
     </section>
 
     <aside class="admin-right">
       <div class="side-label">实时工单</div>
-      <div class="order-card order-urgent">
-        <div class="order-header">
-          <span class="order-tag urgent">紧急</span>
-          <span>14:30</span>
-        </div>
-        <div class="order-content">3栋2单元401 王大爷 摔倒求助</div>
-        <div class="order-status">待处理</div>
-        <el-button size="small" type="primary" class="order-btn">接单处理</el-button>
+      
+      <div v-if="orderList.length === 0" style="text-align: center; margin-top: 50px; color: rgba(255,255,255,0.4); font-size: 14px;">
+        暂无待处理的紧急求助
       </div>
-      <div class="order-card order-urgent">
+
+      <div 
+        v-for="order in orderList" 
+        :key="order.helpId"
+        :class="['order-card', order.type === 'URGENT' ? 'order-urgent' : 'order-normal']"
+      >
         <div class="order-header">
-          <span class="order-tag urgent">紧急</span>
-          <span>14:15</span>
+          <span :class="['order-tag', order.type.toLowerCase()]">{{ order.type === 'URGENT' ? '紧急' : '普通' }}</span>
+          <span>{{ order.time }}</span>
         </div>
-        <div class="order-content">7栋1单元201 李奶奶 胸闷不适</div>
-        <div class="order-status">家属已接单</div>
-        <el-button size="small" type="primary" class="order-btn">接单处理</el-button>
+        <div class="order-content">{{ order.content }}</div>
+        <div class="order-status">{{ order.status }}</div>
+        <el-button 
+          v-if="order.status === '待处理'" 
+          size="small" 
+          type="primary" 
+          class="order-btn" 
+          @click="handleOrder(order.helpId, 2)"
+        >社区接单</el-button>
+        <el-button 
+          v-else 
+          size="small" 
+          type="success" 
+          class="order-btn" 
+          @click="handleOrder(order.helpId, 3)"
+        >确认已解决</el-button>
       </div>
-      <div class="order-card order-normal">
-        <div class="order-header">
-          <span class="order-tag normal">普通</span>
-          <span>11:20</span>
-        </div>
-        <div class="order-content">2栋3单元502 张大爷 用药咨询</div>
-        <div class="order-status">已解决</div>
-        <el-button size="small" type="primary" class="order-btn">接单处理</el-button>
-      </div>
-      <div class="order-card order-normal">
-        <div class="order-header">
-          <span class="order-tag normal">普通</span>
-          <span>09:40</span>
-        </div>
-        <div class="order-content">5栋1单元102 赵奶奶 预约确认</div>
-        <div class="order-status">已解决</div>
-        <el-button size="small" type="primary" class="order-btn">接单处理</el-button>
-      </div>
-      <div class="right-exit" @click="goLogin">退出</div>
+      
+      <div class="right-exit" @click="goLogin">退出监控中心</div>
     </aside>
   </div>
 </template>
@@ -179,6 +245,7 @@ onUnmounted(() => {
 .admin-side {
   width: 280px;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
 }
 
 .side-label {
@@ -312,6 +379,7 @@ onUnmounted(() => {
 .admin-right {
   width: 300px;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-y: auto;
 }
 
 .order-card {
@@ -348,6 +416,7 @@ onUnmounted(() => {
   margin-top: 8px;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.85);
+  line-height: 1.4;
 }
 
 .order-status {
@@ -363,6 +432,7 @@ onUnmounted(() => {
 
 .right-exit {
   margin-top: auto;
+  padding-top: 20px;
   text-align: center;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.3);
