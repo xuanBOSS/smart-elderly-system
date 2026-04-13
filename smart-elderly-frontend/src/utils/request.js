@@ -5,7 +5,7 @@ import router from '@/router' // 引入路由，用于后续跳转
 // 1. 创建一个自定义的 axios 实例
 const request = axios.create({
   baseURL: 'http://localhost:8080', // 你的后端统一地址
-  timeout: 5000 // 请求超时时间
+  timeout: 60000 // 请求超时时间
 })
 
 // 2. 请求拦截器：发请求前，自动去 localStorage 拿 token 塞进请求头

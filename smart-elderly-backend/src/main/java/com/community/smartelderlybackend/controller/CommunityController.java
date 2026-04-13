@@ -38,6 +38,8 @@ public class CommunityController {
     private EmergencyRecordMapper emergencyRecordMapper;
     @Autowired
     private HealthRecordsMapper healthRecordsMapper;
+    @Autowired
+    private com.community.smartelderlybackend.service.AiService aiService;
 
     @GetMapping("/statistics")
     @Operation(summary = "获取社区大屏统计数据")
@@ -169,5 +171,44 @@ public class CommunityController {
             return text;
         }
         return text + " " + tag;
+    }
+
+    @GetMapping("/risk/predict")
+    @Operation(summary = "调用 AI 大模型进行健康风险预测")
+    public Result<String> predictRisk(@RequestParam Long elderId) {
+        // 1. 查出老人基本信息
+        User elder = userMapper.selectById(elderId);
+        if (elder == null) return Result.error("老人不存在");
+
+        // 2. 查出老人最近一条体检数据
+        LambdaQueryWrapper<HealthRecords> hrWrapper = new LambdaQueryWrapper<>();
+        hrWrapper.eq(HealthRecords::getUserId, elderId)
+                .orderByDesc(HealthRecords::getRecordTime)
+                .last("LIMIT 1");
+        HealthRecords latestRecord = healthRecordsMapper.selectOne(hrWrapper);
+
+        if (latestRecord == null) {
+            return Result.error("该老人暂无健康数据，AI 无法诊断");
+        }
+
+        // 3. 核心：组装给大模型的 Prompt（提示词工程）
+        String prompt = String.format(
+                "【系统设定】：你是一位拥有 20 年临床经验的社区全科主任医师，语言风格要专业、严谨且通俗易懂。\n" +
+                        "【患者背景】：患者姓名：%s，年龄：%d岁。\n" +
+                        "【近期体征数据】：最新收缩压：%.1f mmHg，舒张压：%.1f mmHg，心率：%d 次/分，空腹血糖：%.1f mmol/L。\n" +
+                        "【你的任务】：请根据上述数据，给出一段 200 字左右的健康风险预测报告。必须包含：\n" +
+                        "1. 当前综合风险评级（高危/中危/安全）；\n" +
+                        "2. 核心风险点简短分析；\n" +
+                        "3. 给社区工作人员的立即干预建议（如需要上门、需要复测或无需特殊处理）。\n" +
+                        "直接输出报告内容，不要带任何开场白。",
+                elder.getRealName(), elder.getAge(),
+                latestRecord.getBloodPressureHigh(), latestRecord.getBloodPressureLow(),
+                latestRecord.getHeartRate(), latestRecord.getBloodSugar()
+        );
+
+        // 4. 发送给 DeepSeek，获取诊断结果！
+        String aiReport = aiService.getRiskPrediction(prompt);
+
+        return Result.success(aiReport);
     }
 }

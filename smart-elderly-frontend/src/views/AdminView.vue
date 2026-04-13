@@ -1,10 +1,9 @@
-# AdminView.vue - 社区工作人员界面组件
-
+# AdminView.vue
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -20,6 +19,11 @@ const stats = ref({
   monthlyEmergencies: 0
 })
 const orderList = ref([])
+
+// 🌟 AI 诊断相关响应式变量
+const showAiDialog = ref(false)
+const aiLoading = ref(false)
+const aiReport = ref('')
 
 // 时间更新逻辑
 const updateTime = () => {
@@ -59,7 +63,7 @@ const initChart = () => {
   })
 }
 
-//1. 获取左侧统计大盘数据
+// 1. 获取左侧统计大盘数据
 const fetchStatistics = async () => {
   try {
     const res = await request.get('/api/community/statistics')
@@ -70,7 +74,6 @@ const fetchStatistics = async () => {
       stats.value.todayAppointments = data.todayAppointments || 0
       stats.value.monthlyEmergencies = data.monthlyEmergencies || 0
       
-      // 更新 Echarts 柱状图
       if (chartInstance && data.diseaseChart) {
         chartInstance.setOption({
           yAxis: { data: data.diseaseChart.labels },
@@ -83,7 +86,7 @@ const fetchStatistics = async () => {
   }
 }
 
-//2. 获取右侧实时工单列表
+// 2. 获取右侧实时工单列表
 const fetchEmergencies = async () => {
   try {
     const res = await request.get('/api/community/emergencies')
@@ -95,13 +98,13 @@ const fetchEmergencies = async () => {
   }
 }
 
-//3. 处理紧急工单（网格员接单/解决）
+// 3. 处理紧急工单
 const handleOrder = async (helpId, action) => {
   try {
     const res = await request.post(`/api/community/emergency/handle?helpId=${helpId}&action=${action}`)
     if (res.data.code === 200) {
       ElMessage.success(action === 2 ? '已接单，请尽快上门处理' : '问题已解决，工单归档')
-      fetchEmergencies() // 重新刷新工单列表
+      fetchEmergencies()
     } else {
       ElMessage.error(res.data.message || '操作失败')
     }
@@ -109,6 +112,41 @@ const handleOrder = async (helpId, action) => {
     console.error('工单处理异常', error)
     ElMessage.error('网络异常')
   }
+}
+
+// 🌟 4. 触发 AI 风险预测
+const runAiPrediction = () => {
+  // 1. 弹出输入框，让网格员动态输入需要查询的老人 ID
+  ElMessageBox.prompt('请输入需要进行 AI 风险深度评估的老人 ID（如：1038）：', '🤖 智能巡检系统', {
+    confirmButtonText: '启动 DeepSeek 医疗大脑',
+    cancelButtonText: '取消',
+    inputPattern: /^[0-9]+$/, // 正则校验：只能输入纯数字
+    inputErrorMessage: '老人 ID 格式错误，必须是纯数字！',
+  }).then(async ({ value }) => {
+    // 2. 用户点击确认后，拿到真实输入的 ID
+    const elderId = value
+    
+    showAiDialog.value = true // 打开报告展示弹窗
+    aiLoading.value = true    // 开启炫酷加载动画
+    aiReport.value = ''       // 清空上一次的旧报告
+    
+    try {
+      // 3. 把用户动态输入的 elderId 拼接到请求 URL 中！
+      const res = await request.get(`/api/community/risk/predict?elderId=${elderId}`)
+      if (res.data.code === 200) {
+        aiReport.value = res.data.data
+      } else {
+        aiReport.value = 'AI 诊断失败：' + (res.data.message || '未知错误')
+      }
+    } catch (error) {
+      console.error('呼叫 AI 异常', error)
+      aiReport.value = '连接 DeepSeek 大脑超时或失败，请检查网络。'
+    } finally {
+      aiLoading.value = false
+    }
+  }).catch(() => {
+    // 用户点击取消，静默处理，什么都不做
+  })
 }
 
 const resizeChart = () => {
@@ -171,7 +209,12 @@ onUnmounted(() => {
     <section class="admin-main">
       <div class="main-header">
         <div class="main-title">社区态势监控</div>
-        <div class="main-time">{{ timeText }}</div>
+        <div class="header-actions">
+          <el-button type="warning" plain size="small" @click="runAiPrediction()">
+            🤖 AI 高危人群巡检
+          </el-button>
+          <div class="main-time">{{ timeText }}</div>
+        </div>
       </div>
       <div class="status-panel">
         <div class="grid-map">
@@ -222,6 +265,25 @@ onUnmounted(() => {
       
       <div class="right-exit" @click="goLogin">退出监控中心</div>
     </aside>
+
+    <el-dialog 
+      v-model="showAiDialog" 
+      title="🤖 AI 智能风险预测报告" 
+      width="600px"
+      class="ai-dialog"
+      append-to-body
+      destroy-on-close
+    >
+      <div v-loading="aiLoading" element-loading-text="DeepSeek 大脑正在进行深度医学推理..." class="ai-report-content">
+        <div v-if="!aiReport" class="ai-empty">
+           等待 AI 分析返回...
+        </div>
+        <div v-else class="report-text" v-html="aiReport"></div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="showAiDialog = false">阅知并归档</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -314,6 +376,13 @@ onUnmounted(() => {
 .main-title {
   font-size: 18px;
   font-weight: 700;
+}
+
+/* 🌟 新增：头部操作区样式 */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
 }
 
 .main-time {
@@ -442,5 +511,52 @@ onUnmounted(() => {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+/* 🌟 新增：AI 弹窗与报告样式 */
+:deep(.ai-dialog .el-dialog__header) {
+  border-bottom: 1px solid rgba(24, 144, 255, 0.2);
+  margin-right: 0;
+}
+
+:deep(.ai-dialog .el-dialog__title) {
+  color: #1890ff;
+  font-weight: 700;
+}
+
+.ai-report-content {
+  min-height: 200px;
+  background: rgba(24, 144, 255, 0.05);
+  border: 1px solid rgba(24, 144, 255, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  color: #333; /* 文字颜色，因为弹窗是白底的 */
+}
+
+.report-text {
+  font-size: 15px;
+  line-height: 1.8;
+  white-space: pre-wrap; /* 核心：识别换行符 \n */
+  text-align: justify;
+}
+
+/* 如果 AI 返回的是 markdown 语法，简单的处理加粗显示 */
+:deep(.report-text strong),
+:deep(.report-text b) {
+  color: #ff4d4f;
+  font-weight: bold;
+}
+
+.ai-empty {
+  text-align: center;
+  color: #1890ff;
+  line-height: 200px;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
 }
 </style>
