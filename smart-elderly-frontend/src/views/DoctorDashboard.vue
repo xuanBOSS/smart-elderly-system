@@ -5,6 +5,9 @@ import { useRouter } from 'vue-router'
 import request from '@/utils/request' // 🌟 引入咱们的网络大总管
 
 const router = useRouter()
+const weekMap = ['日', '一', '二', '三', '四', '五', '六']
+const now = new Date()
+const currentDate = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekMap[now.getDay()]}`
 
 const schedule = ref([
   { day: '周一', value: '' },
@@ -102,7 +105,7 @@ onMounted(() => {
   <div class="doctor-dashboard">
     <div class="doctor-topbar">
       <div class="page-title">患者预约大厅</div>
-      <div class="page-date">2026年04月11日 星期六</div> 
+      <div class="page-date">{{ currentDate }}</div> 
     </div>
 
     <section class="schedule-card">
@@ -158,26 +161,40 @@ onMounted(() => {
 .page-title {
   font-size: 22px;
   font-weight: 700;
-  color: #303133;
+  color: #203449;
 }
 
 .page-date {
   font-size: 14px;
-  color: #909399;
+  color: #6f859d;
 }
 
 .schedule-card,
 .appointment-card {
-  background: #fff;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+  border-radius: 14px;
   padding: 20px;
   margin-bottom: 20px;
+  border: 1px solid #dce7f3;
+  box-shadow: 0 8px 20px rgba(30, 63, 100, 0.08);
 }
 
 .section-title {
   font-size: 16px;
   font-weight: 700;
   margin-bottom: 16px;
+  color: #24384f;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #2994ea 0%, #57b4ff 100%);
 }
 
 .appointment-count {
@@ -188,13 +205,15 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
-  background: #ebeef5;
+  background: #dfe9f3;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .schedule-cell {
   min-height: 64px;
   padding: 12px 10px;
-  background: #fff;
+  background: #f9fcff;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -203,13 +222,13 @@ onMounted(() => {
 
 .cell-day {
   font-size: 13px;
-  color: #909399;
+  color: #7387a1;
   margin-bottom: 6px;
 }
 
 .cell-value {
   font-size: 13px;
-  color: #1890ff;
+  color: #248fe2;
   text-align: center;
 }
 

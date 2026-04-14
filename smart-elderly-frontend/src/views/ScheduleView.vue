@@ -63,7 +63,7 @@ onMounted(() => {
   max-width: 880px;
   margin: 0 auto;
   padding: 24px;
-  background: #f0f2f5;
+  background: transparent;
 }
 
 .page-header {
@@ -77,25 +77,27 @@ onMounted(() => {
 .page-header h1 {
   margin: 0;
   font-size: 24px;
-  color: #303133;
+  color: #203449;
 }
 
 .page-header p {
   margin: 6px 0 0;
-  color: #606266;
+  color: #70839a;
 }
 
 .schedule-card {
-  background: #fff;
-  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+  border-radius: 14px;
   padding: 20px;
+  border: 1px solid #dce7f3;
+  box-shadow: 0 8px 20px rgba(30, 63, 100, 0.08);
 }
 
 .schedule-row {
   display: flex;
   align-items: center;
   padding: 18px 0;
-  border-bottom: 1px solid #f2f3f5;
+  border-bottom: 1px solid #eaf0f6;
 }
 
 .schedule-row:last-child {
@@ -106,7 +108,7 @@ onMounted(() => {
   width: 100px;
   font-size: 18px;
   font-weight: 700;
-  color: #1890ff; /* 高亮显示星期 */
+  color: #238ee1;
 }
 
 .schedule-info {
@@ -116,13 +118,13 @@ onMounted(() => {
 .schedule-time {
   font-size: 15px;
   font-weight: 500;
-  color: #303133;
+  color: #2a3f57;
 }
 
 .schedule-note {
   margin-top: 6px;
   font-size: 13px;
-  color: #909399;
+  color: #7f92a7;
 }
 
 /* 如果号源满了，可以扩展个标红样式 */

@@ -68,13 +68,14 @@ const activePath = computed(() => route.path)
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  background: linear-gradient(180deg, #eef4fb 0%, #e6edf6 100%);
 }
 
 .doctor-sider {
   width: 220px;
   flex-shrink: 0;
   height: 100vh;
-  background: #001529;
+  background: linear-gradient(180deg, #10263f 0%, #163252 100%);
   color: #fff;
   display: flex;
   flex-direction: column;
@@ -99,6 +100,7 @@ const activePath = computed(() => route.path)
 .doctor-logo {
   font-size: 18px;
   font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
 .doctor-logo-icon {
@@ -107,16 +109,17 @@ const activePath = computed(() => route.path)
   line-height: 32px;
   text-align: center;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.16);
   font-size: 16px;
 }
 
 .collapse-button {
   border: none;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.1);
   color: #fff;
   cursor: pointer;
-  padding: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
 }
 
 .toggle-icon {
@@ -134,9 +137,10 @@ const activePath = computed(() => route.path)
   color: #fff;
   font-size: 14px;
   cursor: pointer;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   border-left: 3px solid transparent;
-  transition: background 0.2s ease;
+  border-radius: 8px;
+  transition: all 0.2s ease;
 }
 
 .nav-item.collapsed {
@@ -145,8 +149,9 @@ const activePath = computed(() => route.path)
 }
 
 .nav-item.active {
-  background: rgba(24, 144, 255, 0.15);
-  border-left-color: #1890ff;
+  background: linear-gradient(90deg, rgba(52, 146, 255, 0.25) 0%, rgba(52, 146, 255, 0.08) 100%);
+  border-left-color: #56acff;
+  box-shadow: inset 0 0 0 1px rgba(86, 172, 255, 0.3);
 }
 
 .nav-icon {
@@ -185,7 +190,7 @@ const activePath = computed(() => route.path)
   flex: 1;
   min-width: 800px;
   max-width: calc(100vw - 60px);
-  background: #f0f2f5;
+  background: linear-gradient(180deg, #eef4fb 0%, #e8eff8 100%);
   padding: 24px;
   overflow-y: auto;
   height: 100vh;

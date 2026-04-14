@@ -232,7 +232,7 @@ onUnmounted(() => {
     <aside class="admin-right">
       <div class="side-label">实时工单</div>
       
-      <div v-if="orderList.length === 0" style="text-align: center; margin-top: 50px; color: rgba(255,255,255,0.4); font-size: 14px;">
+      <div v-if="orderList.length === 0" class="empty-order-tip">
         暂无待处理的紧急求助
       </div>
 
@@ -293,7 +293,10 @@ onUnmounted(() => {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #0d1b2a;
+  background:
+    radial-gradient(circle at 22% 12%, rgba(62, 137, 255, 0.18), transparent 30%),
+    radial-gradient(circle at 78% 88%, rgba(49, 194, 156, 0.15), transparent 26%),
+    linear-gradient(180deg, #0f2238 0%, #0b1a2c 100%);
   color: #fff;
 }
 
@@ -306,52 +309,61 @@ onUnmounted(() => {
 
 .admin-side {
   width: 280px;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-right: 1px solid rgba(123, 176, 236, 0.16);
+  background: rgba(15, 33, 53, 0.65);
+  backdrop-filter: blur(2px);
   overflow-y: auto;
 }
 
 .side-label {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(174, 212, 248, 0.82);
   letter-spacing: 2px;
   margin-bottom: 20px;
+  font-weight: 600;
 }
 
 .stat-card {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(31, 61, 92, 0.7) 0%, rgba(24, 48, 75, 0.76) 100%);
+  border-radius: 12px;
   padding: 16px;
   margin-bottom: 12px;
+  border: 1px solid rgba(120, 175, 235, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .stat-title {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(189, 218, 245, 0.78);
 }
 
 .stat-value {
   margin-top: 8px;
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
+  color: #f4fbff;
+  letter-spacing: 0.3px;
 }
 
 .stat-trend {
   margin-top: 8px;
   font-size: 11px;
-  color: #52c41a;
+  color: #61d882;
 }
 
 .chart-panel {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(31, 61, 92, 0.72) 0%, rgba(24, 48, 75, 0.78) 100%);
+  border-radius: 12px;
   padding: 16px;
   margin-top: 12px;
+  border: 1px solid rgba(120, 175, 235, 0.18);
 }
 
 .chart-title {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #d6ebff;
   margin-bottom: 14px;
+  font-weight: 600;
 }
 
 .admin-chart {
@@ -374,8 +386,9 @@ onUnmounted(() => {
 }
 
 .main-title {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
+  color: #e8f3ff;
 }
 
 /* 🌟 新增：头部操作区样式 */
@@ -387,19 +400,21 @@ onUnmounted(() => {
 
 .main-time {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(196, 220, 245, 0.85);
+  font-weight: 600;
 }
 
 .status-panel {
   flex: 1;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(20, 42, 66, 0.76) 0%, rgba(15, 34, 53, 0.8) 100%);
+  border: 1px solid rgba(117, 173, 235, 0.2);
+  border-radius: 12px;
   padding: 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
 .grid-map {
@@ -411,21 +426,23 @@ onUnmounted(() => {
 .map-cell {
   width: 80px;
   height: 60px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(58, 105, 153, 0.34) 0%, rgba(38, 76, 116, 0.42) 100%);
   display: flex;
   justify-content: center;
   align-items: center;
   position: relative;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(215, 231, 246, 0.85);
   font-size: 12px;
+  border: 1px solid rgba(133, 183, 240, 0.24);
 }
 
 .map-cell.alarm {
-  background: rgba(255, 77, 79, 0.3);
+  background: linear-gradient(180deg, rgba(255, 77, 79, 0.35) 0%, rgba(190, 42, 44, 0.42) 100%);
   border: 1px solid #ff4d4f;
   color: #fff;
   font-weight: 700;
+  box-shadow: 0 0 0 1px rgba(255, 77, 79, 0.25), 0 0 16px rgba(255, 77, 79, 0.26);
 }
 
 .alarm-dot {
@@ -441,21 +458,24 @@ onUnmounted(() => {
 
 .map-note {
   margin-top: 16px;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(202, 224, 246, 0.85);
   font-size: 12px;
 }
 
 .admin-right {
   width: 300px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 1px solid rgba(123, 176, 236, 0.16);
+  background: rgba(14, 31, 50, 0.64);
+  backdrop-filter: blur(2px);
   overflow-y: auto;
 }
 
 .order-card {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(31, 61, 92, 0.72) 0%, rgba(24, 48, 75, 0.78) 100%);
+  border-radius: 10px;
   padding: 14px;
   margin-bottom: 10px;
+  border: 1px solid rgba(120, 175, 235, 0.18);
 }
 
 .order-header {
@@ -484,14 +504,14 @@ onUnmounted(() => {
 .order-content {
   margin-top: 8px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(227, 239, 250, 0.92);
   line-height: 1.4;
 }
 
 .order-status {
   margin-top: 6px;
   font-size: 12px;
-  color: #ff4d4f;
+  color: #ff9ea0;
 }
 
 .order-btn {
@@ -504,8 +524,15 @@ onUnmounted(() => {
   padding-top: 20px;
   text-align: center;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(194, 218, 243, 0.45);
   cursor: pointer;
+}
+
+.empty-order-tip {
+  text-align: center;
+  margin-top: 50px;
+  color: rgba(189, 217, 245, 0.65);
+  font-size: 14px;
 }
 
 @keyframes blink {
