@@ -42,6 +42,9 @@ const enterSystem = async () => {
       
       // 🌟把后端的 Token 存入本地缓存
       if (data.token) {
+        // 按角色存储 token，避免切换角色后互相覆盖导致其他端被踢回登录
+        localStorage.setItem(`token_${data.role}`, data.token)
+        // 同时保留旧字段，保证兼容旧逻辑
         localStorage.setItem('token', data.token)
       }
       localStorage.setItem('userInfo', JSON.stringify({

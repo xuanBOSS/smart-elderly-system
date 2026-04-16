@@ -16,6 +16,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -195,8 +197,39 @@ public class DoctorController {
             String timeStr = schedule.getTimeSlot() == 0 ? "上午 08:00 - 12:00" : "下午 14:00 - 18:00";
             map.put("time", schedule.getWorkDate().format(dateFormatter) + " " + timeStr);
 
-            // 组装备注信息（显示挂号进度）
-            map.put("note", "门诊接诊 (已约: " + schedule.getBookedCount() + " / " + schedule.getMaxCapacity() + ")");
+            // 组装备注信息（医生排班“已约/待确认/是否满号”）
+            int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
+            int maxCapacity = schedule.getMaxCapacity() == null ? 0 : schedule.getMaxCapacity();
+
+            java.time.LocalDate workDate = schedule.getWorkDate();
+            LocalDateTime start = workDate.atStartOfDay();
+            LocalDateTime end = workDate.atTime(LocalTime.MAX);
+
+            // 待确认预约：老人提交但医生尚未确认(status=0)
+            List<Appointment> pendingAppts = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
+                    .eq(Appointment::getDoctorId, doctorId)
+                    .eq(Appointment::getStatus, 0)
+                    .between(Appointment::getAppointTime, start, end));
+
+            int timeSlot = schedule.getTimeSlot() == null ? 0 : schedule.getTimeSlot();
+            long pendingCount = pendingAppts.stream()
+                    .filter(a -> a.getAppointTime() != null)
+                    .filter(a -> {
+                        int hour = a.getAppointTime().getHour();
+                        int apptSlot = hour < 12 ? 0 : 1;
+                        return apptSlot == timeSlot;
+                    })
+                    .count();
+
+            // 用于判断是否满号：已约(确认) + 待确认(占用但未接诊)
+            int reservedCount = bookedCount + (int) pendingCount;
+            String fullTag = (maxCapacity > 0 && reservedCount >= maxCapacity) ? " 满" : "";
+
+            // 关键：这里把“已约”和“待确认”拆开显示
+            // 这样老人提交会增加待确认；医生确认后待确认减少、已约增加，数字会明显变化。
+            map.put("note",
+                    "门诊接诊 (已约: " + bookedCount + " / " + maxCapacity +
+                            "，待确认: " + pendingCount + fullTag + ")");
 
             resultList.add(map);
         }

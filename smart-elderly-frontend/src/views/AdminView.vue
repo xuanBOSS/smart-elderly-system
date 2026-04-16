@@ -154,6 +154,7 @@ const resizeChart = () => {
 }
 
 const goLogin = () => {
+  localStorage.removeItem('token_3')
   localStorage.removeItem('token')
   router.push('/login')
 }

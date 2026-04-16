@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { House, User, Star, Search } from '@element-plus/icons-vue'
+import { House, User, Star, Search, Setting } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -17,6 +17,12 @@ const pageLoading = ref(true)
 const showRecordDrawer = ref(false)
 const appointmentRecords = ref([])
 const hugeFontMode = ref(localStorage.getItem('elderlyHugeFont') === '1')
+const sosConfirmEnabled = ref(localStorage.getItem('elderlySosConfirm') !== '0')
+const sosVibrateEnabled = ref(localStorage.getItem('elderlySosVibrate') !== '0')
+const sosGeoWarnEnabled = ref(localStorage.getItem('elderlySosGeoWarn') !== '0')
+const appointmentAutoRefreshEnabled = ref(localStorage.getItem('elderlyAppointmentAutoRefresh') !== '0')
+const sosConfirmPending = ref(false)
+let sosConfirmTimer = null
 const showVoicePanel = ref(false)
 const voiceText = ref('')
 const doctorsLoaded = ref(false)
@@ -82,8 +88,18 @@ const doctorCards = computed(() => {
 const activeAppointmentDoctorIds = computed(() => {
   return new Set(
     appointmentRecords.value
-      .filter(item => item.status === '待确认' || item.status === '已确认')
-      .map(item => item.doctorId)
+      .filter(item => (item.status === '待确认' || item.status === '已确认') && item?.appointId)
+      .map(item => String(item.doctorId))
+  )
+})
+
+const todaySchedules = ref([])
+
+const doctorTodayAvailableIds = computed(() => {
+  return new Set(
+    todaySchedules.value
+      .filter(s => Number(s.remainCount) > 0)
+      .map(s => String(s.doctorId))
   )
 })
 
@@ -93,6 +109,32 @@ const toggleHugeFontMode = () => {
   hugeFontMode.value = !hugeFontMode.value
   localStorage.setItem('elderlyHugeFont', hugeFontMode.value ? '1' : '0')
 }
+
+const setHugeFontMode = (large) => {
+  hugeFontMode.value = !!large
+  localStorage.setItem('elderlyHugeFont', hugeFontMode.value ? '1' : '0')
+}
+
+watch(sosConfirmEnabled, (val) => {
+  localStorage.setItem('elderlySosConfirm', val ? '1' : '0')
+  if (!val) {
+    sosConfirmPending.value = false
+    if (sosConfirmTimer) clearTimeout(sosConfirmTimer)
+    sosConfirmTimer = null
+  }
+})
+
+watch(sosVibrateEnabled, (val) => {
+  localStorage.setItem('elderlySosVibrate', val ? '1' : '0')
+})
+
+watch(sosGeoWarnEnabled, (val) => {
+  localStorage.setItem('elderlySosGeoWarn', val ? '1' : '0')
+})
+
+watch(appointmentAutoRefreshEnabled, (val) => {
+  localStorage.setItem('elderlyAppointmentAutoRefresh', val ? '1' : '0')
+})
 
 const withFriendlyError = (error, fallbackText) => {
   if (!error.response) return '网络异常，请检查网络后重试'
@@ -108,12 +150,20 @@ const getCurrentUserId = () => {
   }
 }
 
-const loadAppointmentRecords = () => {
+const loadAppointmentRecords = async () => {
+  const userId = getCurrentUserId()
+  if (!userId) {
+    appointmentRecords.value = []
+    return
+  }
+
   try {
-    const userId = getCurrentUserId()
-    if (!userId) return
-    const all = JSON.parse(localStorage.getItem('elderlyAppointmentRecords') || '[]')
-    appointmentRecords.value = all.filter(item => Number(item.userId) === Number(userId))
+    const { data } = await request.get('/api/elderly/appointments', { params: { userId } })
+    if (data.code === 200) {
+      appointmentRecords.value = data.data || []
+    } else {
+      appointmentRecords.value = []
+    }
   } catch {
     appointmentRecords.value = []
   }
@@ -132,19 +182,87 @@ const saveAppointmentRecords = () => {
   localStorage.setItem('elderlyAppointmentRecords', JSON.stringify([...remained, ...appointmentRecords.value]))
 }
 
+const formatAppointTime = (appointTime) => {
+  if (!appointTime) return new Date().toLocaleString('zh-CN', { hour12: false })
+  const d = new Date(appointTime)
+  if (Number.isNaN(d.getTime())) return String(appointTime)
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+
+const getEmergencyLocation = () => {
+  if (!navigator.geolocation) {
+    return Promise.resolve({ text: '', latitude: null, longitude: null })
+  }
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords
+        const text = `定位坐标(${latitude.toFixed(6)}, ${longitude.toFixed(6)})，精度约${Math.round(accuracy)}米`
+        resolve({ text, latitude, longitude })
+      },
+      () => resolve({ text: '', latitude: null, longitude: null }),
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 60000
+      }
+    )
+  })
+}
+
 const sendEmergency = async () => {
+  if (!sosConfirmEnabled.value) {
+    return sendEmergencyReal()
+  }
+
+  // 二次确认：点击一次->提示->6秒内再点一次才真正发起报警
+  if (sosConfirmPending.value) {
+    sosConfirmPending.value = false
+    if (sosConfirmTimer) clearTimeout(sosConfirmTimer)
+    sosConfirmTimer = null
+    return sendEmergencyReal()
+  }
+
+  sosConfirmPending.value = true
+  ElMessage.warning('已收到 SOS 触发：请在 6 秒内再次点击以确认报警')
+  if (sosConfirmTimer) clearTimeout(sosConfirmTimer)
+  sosConfirmTimer = setTimeout(() => {
+    sosConfirmPending.value = false
+    sosConfirmTimer = null
+  }, 6000)
+}
+
+const sendEmergencyReal = async () => {
   const userId = getCurrentUserId()
   if (!userId) {
     ElMessage.warning('请先登录后再操作')
     return
   }
+
   try {
-    const { data } = await request.post('/api/elderly/emergency', { userId })
+    // SOS震动提示（演示）
+    if (sosVibrateEnabled.value && typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(200)
+    }
+
+    const geo = await getEmergencyLocation()
+    const { data } = await request.post('/api/elderly/emergency', {
+      userId,
+      latitude: geo.latitude ?? undefined,
+      longitude: geo.longitude ?? undefined
+    })
     if (data.code !== 200) {
       ElMessage.error(data.message || '报警失败，请稍后重试')
       return
     }
-    ElMessage.success(`报警成功，工单号 ${data.data.helpId}`)
+    const helpId = data.data?.helpId
+    const finalLocation = data.data?.location || '未登记家庭住址'
+    const handleResult = data.data?.handleResult || '老人发起一键报警'
+    ElMessage.success(`报警成功，工单号 ${helpId}；位置：${finalLocation}；状态：${handleResult}`)
+    if (sosGeoWarnEnabled.value && (geo.latitude == null || geo.longitude == null)) {
+      ElMessage.warning('本次未获取到实时定位，已回退为默认地址，请检查浏览器定位权限')
+    }
   } catch (error) {
     ElMessage.error(withFriendlyError(error, '报警失败，请稍后重试'))
   }
@@ -169,21 +287,23 @@ const loadHealth = async () => {
   const userId = getCurrentUserId()
   if (!userId) return
   try {
-    const { data } = await request.get('/api/health/dashboard', { params: { elderId: userId } })
+    const { data } = await request.get('/api/elderly/health', { params: { userId } })
     if (data.code !== 200) {
+      health.value = null
+      checkinStatus.value = '未完成'
       ElMessage.error(data.message || '健康档案加载失败')
       return
     }
-    const latest = data.data?.latest || {}
-    const pressure = String(latest.bloodPressure || '--/--').split('/')
     health.value = {
-      bloodPressureHigh: pressure[0],
-      bloodPressureLow: pressure[1],
-      heartRate: latest.heartRate,
-      bloodSugar: latest.bloodSugar
+      bloodPressureHigh: data.data?.bloodPressureHigh,
+      bloodPressureLow: data.data?.bloodPressureLow,
+      heartRate: data.data?.heartRate,
+      bloodSugar: data.data?.bloodSugar
     }
     checkinStatus.value = health.value?.heartRate && health.value?.bloodPressureHigh ? '已完成' : '未完成'
   } catch (error) {
+    health.value = null
+    checkinStatus.value = '未完成'
     ElMessage.error(withFriendlyError(error, '健康档案加载失败'))
   }
 }
@@ -192,15 +312,27 @@ const loadDoctors = async () => {
   if (doctorsLoaded.value || loadingDoctors.value) return
   loadingDoctors.value = true
   try {
-    const list = []
-    // 目前测试库医生账号集中在 1001-1010，先按需拉取这个区间避免首屏卡顿
-    for (let id = 1001; id <= 1010; id += 1) {
-      const { data } = await request.get(`/api/user/${id}`)
-      if (data.code === 200 && data.data && Number(data.data.role) === 2) {
-        list.push(data.data)
-      }
+    // 拉取当天各医生的号源情况（用于“今日可约/不可约”显示与禁用按钮）
+    const { data: scheduleRes } = await request.post('/api/elderly/appointment', {})
+    if (scheduleRes?.code === 200) {
+      todaySchedules.value = scheduleRes.data?.schedules || []
+    } else {
+      todaySchedules.value = []
     }
-    doctors.value = list
+
+    const userId = getCurrentUserId()
+    if (!userId) {
+      doctors.value = []
+      return
+    }
+
+    // 获取所有医生（后端 role=2）
+    const { data: doctorsRes } = await request.get('/api/elderly/doctors', { params: { userId } })
+    if (doctorsRes?.code === 200) {
+      doctors.value = Array.isArray(doctorsRes.data) ? doctorsRes.data : []
+    } else {
+      doctors.value = []
+    }
     doctorsLoaded.value = true
   } catch (error) {
     ElMessage.error(withFriendlyError(error, '医生列表加载失败'))
@@ -209,27 +341,86 @@ const loadDoctors = async () => {
   }
 }
 
-const bookNow = (doctor) => {
-  if (activeAppointmentDoctorIds.value.has(doctor.userId)) {
+const bookNow = async (doctor) => {
+  if (activeAppointmentDoctorIds.value.has(String(doctor.userId))) {
     ElMessage.warning('该医生已有进行中的预约，请勿重复提交')
     return
   }
-  appointmentRecords.value.unshift({
-    id: `${Date.now()}-${doctor.userId}`,
-    userId: getCurrentUserId(),
-    doctorId: doctor.userId,
-    doctorName: doctor.realName,
-    department: '老年医学门诊',
-    status: '待确认',
-    createTime: new Date().toLocaleString('zh-CN', { hour12: false })
-  })
-  saveAppointmentRecords()
-  ElMessage.success(`已提交给 ${doctor.realName} 的预约申请`)
+
+  if (!doctorTodayAvailableIds.value.has(String(doctor.userId))) {
+    ElMessage.warning('该医生今日号源不足，暂时无法预约')
+    return
+  }
+
+  const userId = getCurrentUserId()
+  if (!userId) {
+    ElMessage.warning('请先登录后再预约')
+    return
+  }
+
+  try {
+    const { data } = await request.post('/api/elderly/appointment', { userId, doctorId: doctor.userId })
+    if (data.code !== 200) {
+      ElMessage.error(data.message || '预约失败，请稍后重试')
+      return
+    }
+
+    const appointId = data.data?.appointId
+    const appointTime = data.data?.appointTime
+
+    appointmentRecords.value.unshift({
+      id: String(appointId),
+      appointId,
+      userId,
+      doctorId: doctor.userId,
+      doctorName: doctor.realName,
+      status: '待确认',
+      createTime: formatAppointTime(appointTime)
+    })
+    saveAppointmentRecords()
+    // 以服务器数据为准，避免 localStorage 与后端状态不一致
+    loadAppointmentRecords()
+    ElMessage.success(`已提交给 ${doctor.realName} 的预约申请`)
+  } catch (error) {
+    ElMessage.error(withFriendlyError(error, '预约失败，请稍后重试'))
+  }
 }
 
 const openAppointmentRecords = () => {
-  loadAppointmentRecords()
   showRecordDrawer.value = true
+  loadAppointmentRecords()
+}
+
+const canCancelAppointment = (item) => {
+  return (item?.status === '待确认' || item?.status === '已确认') && item?.appointId
+}
+
+const cancelAppointment = async (item) => {
+  const userId = getCurrentUserId()
+  if (!userId) {
+    ElMessage.warning('请先登录后再操作')
+    return
+  }
+
+  if (!item?.appointId) {
+    ElMessage.warning('该预约无法取消（缺少预约ID）')
+    return
+  }
+
+  try {
+    const { data } = await request.post('/api/elderly/appointment/cancel', null, {
+      params: { appointId: item.appointId, userId }
+    })
+    if (data.code !== 200) {
+      ElMessage.error(data.message || '取消失败，请稍后重试')
+      return
+    }
+
+    await loadAppointmentRecords()
+    ElMessage.success('预约已取消')
+  } catch (error) {
+    ElMessage.error(withFriendlyError(error, '取消失败，请稍后重试'))
+  }
 }
 
 const openVoiceBooking = () => {
@@ -254,7 +445,7 @@ onMounted(async () => {
   try {
     // 首屏只加载首页必需数据，确保进入速度
     await Promise.all([loadUserInfo(), loadHealth()])
-    loadAppointmentRecords()
+    await loadAppointmentRecords()
   } finally {
     pageLoading.value = false
   }
@@ -265,6 +456,26 @@ watch(activeTab, (tab) => {
     loadDoctors()
   }
 })
+
+let appointmentRefreshTimer = null
+watch(showRecordDrawer, (open) => {
+  if (appointmentRefreshTimer) {
+    clearInterval(appointmentRefreshTimer)
+    appointmentRefreshTimer = null
+  }
+
+  if (!open) return
+
+  // 抽屉打开后至少拉一次
+  loadAppointmentRecords()
+
+  // 可选：是否开启自动刷新
+  if (!appointmentAutoRefreshEnabled.value) return
+
+  appointmentRefreshTimer = setInterval(() => {
+    loadAppointmentRecords()
+  }, 3000)
+})
 </script>
 
 <template>
@@ -272,7 +483,6 @@ watch(activeTab, (tab) => {
     <div :class="['elderly-page', { 'font-xxl': hugeFontMode }]">
       <header class="header">
         <p class="date">{{ currentDate }}</p>
-        <button class="font-toggle" @click="toggleHugeFontMode">{{ hugeFontMode ? '标准' : '大字' }}</button>
         <el-button class="exit" link @click="goLogin">退出</el-button>
       </header>
 
@@ -282,7 +492,7 @@ watch(activeTab, (tab) => {
 
       <main
         v-else
-        :class="['content', { 'content-no-scroll': activeTab === 'home' && !hugeFontMode }]"
+        class="content"
       >
         <section v-if="activeTab === 'home'" class="panel">
           <button class="sos-button" @click="sendEmergency">SOS</button>
@@ -298,8 +508,24 @@ watch(activeTab, (tab) => {
           </div>
 
           <div class="voice-action-row">
-            <button class="voice-action-btn" @click="openVoiceBooking">语音预约</button>
-            <button class="voice-action-btn secondary" @click="startVoiceBroadcast">语音播报</button>
+            <button class="voice-action-btn" @click="openVoiceBooking">
+              <svg class="voice-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm7-3a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.93V21H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-3.07A7 7 0 0 0 19 11Z"
+                />
+              </svg>
+              语音预约
+            </button>
+            <button class="voice-action-btn secondary" @click="startVoiceBroadcast">
+              <svg class="voice-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M3 10v4a1 1 0 0 0 1 1h4l5 4V5L8 9H4a1 1 0 0 0-1 1Zm13.5 2a4.5 4.5 0 0 0-2.2-3.87 1 1 0 1 0-.9 1.79A2.5 2.5 0 0 1 15.5 12c0 .98-.54 1.88-1.4 2.37a1 1 0 0 0 .9 1.79A4.5 4.5 0 0 0 16.5 12Zm2.5 0a7 7 0 0 0-3.6-6.1 1 1 0 1 0-.8 1.82A5 5 0 0 1 19 12a5 5 0 0 1-3 4.28 1 1 0 0 0 .8 1.82A7 7 0 0 0 19 12Z"
+                />
+              </svg>
+              语音播报
+            </button>
           </div>
         </section>
 
@@ -328,6 +554,62 @@ watch(activeTab, (tab) => {
           <el-empty v-else description="暂时没有健康数据" />
         </section>
 
+        <section v-else-if="activeTab === 'settings'" class="panel">
+          <h2 class="title">设置</h2>
+
+          <div class="settings-body">
+            <div class="setting-row">
+              <div class="setting-label">字体大小</div>
+              <div class="setting-btn-row">
+                <button class="setting-action-btn" :class="{ active: !hugeFontMode }" @click="setHugeFontMode(false)">
+                  标准
+                </button>
+                <button class="setting-action-btn" :class="{ active: hugeFontMode }" @click="setHugeFontMode(true)">
+                  大字
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-row setting-switch-row">
+              <span>SOS 防误触二次确认</span>
+              <el-switch
+                v-model="sosConfirmEnabled"
+                :active-color="'#13c42b'"
+                :inactive-color="'#cbd5e1'"
+              />
+            </div>
+
+            <div class="setting-row setting-switch-row">
+              <span>SOS 震动提示（演示）</span>
+              <el-switch
+                v-model="sosVibrateEnabled"
+                :active-color="'#13c42b'"
+                :inactive-color="'#cbd5e1'"
+              />
+            </div>
+
+            <div class="setting-row setting-switch-row">
+              <span>SOS 定位失败提示</span>
+              <el-switch
+                v-model="sosGeoWarnEnabled"
+                :active-color="'#13c42b'"
+                :inactive-color="'#cbd5e1'"
+              />
+            </div>
+
+            <div class="setting-row setting-switch-row">
+              <span>我的预约记录自动刷新</span>
+              <el-switch
+                v-model="appointmentAutoRefreshEnabled"
+                :active-color="'#13c42b'"
+                :inactive-color="'#cbd5e1'"
+              />
+            </div>
+
+            <div class="setting-tip">小提示：开启“二次确认”后，点击一次 SOS 会先提示，6 秒内再点才会真正发起报警。</div>
+          </div>
+        </section>
+
         <section v-else class="panel">
           <div class="mine-head">
             <h2 class="title">预约挂号</h2>
@@ -342,12 +624,36 @@ watch(activeTab, (tab) => {
               <div class="avatar">{{ String(item.realName || '医').slice(0, 1) }}</div>
               <div class="doctor-info">
                 <div class="doctor-name">{{ item.realName }}</div>
-                <div class="doctor-dept">老年医学门诊</div>
-                <div class="doctor-state">今日可预约</div>
+                <div class="doctor-state">
+                  {{
+                    activeAppointmentDoctorIds.has(String(item.userId))
+                      ? '预约处理中'
+                      : doctorTodayAvailableIds.has(String(item.userId))
+                        ? '今日可预约'
+                        : '今日不可约'
+                  }}
+                </div>
               </div>
-              <button :disabled="activeAppointmentDoctorIds.has(item.userId)" class="book-btn" @click="bookNow(item)">
-                <span class="book-top">{{ activeAppointmentDoctorIds.has(item.userId) ? '已预约' : '预约' }}</span>
-                <span class="book-bottom">{{ activeAppointmentDoctorIds.has(item.userId) ? '处理中' : '挂号' }}</span>
+              <button
+                :disabled="
+                  activeAppointmentDoctorIds.has(String(item.userId)) ||
+                  !doctorTodayAvailableIds.has(String(item.userId))
+                "
+                class="book-btn"
+                @click="bookNow(item)"
+              >
+                <span class="book-top">
+                  {{ activeAppointmentDoctorIds.has(String(item.userId)) ? '已预约' : '预约' }}
+                </span>
+                <span class="book-bottom">
+                  {{
+                    activeAppointmentDoctorIds.has(String(item.userId))
+                      ? '处理中'
+                      : !doctorTodayAvailableIds.has(String(item.userId))
+                        ? '今日满号/无排班'
+                        : '挂号'
+                  }}
+                </span>
               </button>
             </div>
             <el-empty v-if="!loadingDoctors && doctorCards.length === 0" description="暂时没有匹配医生" />
@@ -368,6 +674,10 @@ watch(activeTab, (tab) => {
           <User class="nav-icon" />
           <span class="nav-text">我的</span>
         </button>
+        <button :class="['nav-item', activeTab === 'settings' && 'active']" @click="activeTab = 'settings'">
+          <Setting class="nav-icon" />
+          <span class="nav-text">设置</span>
+        </button>
       </footer>
 
       <div v-if="showRecordDrawer" class="record-overlay" @click.self="showRecordDrawer = false">
@@ -379,8 +689,17 @@ watch(activeTab, (tab) => {
           <div class="record-list">
             <div v-for="item in appointmentRecords" :key="item.id" class="record-item">
               <div class="record-name">{{ item.doctorName }}</div>
-              <div class="record-meta">{{ item.department }} · {{ item.createTime }}</div>
+              <div class="record-meta">{{ item.createTime }}</div>
               <div :class="['record-status', `status-${item.status}`]">{{ item.status }}</div>
+              <div class="record-actions">
+                <button
+                  v-if="canCancelAppointment(item)"
+                  class="record-cancel-btn"
+                  @click.stop="cancelAppointment(item)"
+                >
+                  取消
+                </button>
+              </div>
             </div>
             <el-empty v-if="appointmentRecords.length === 0" description="暂时没有预约记录" />
           </div>
@@ -401,6 +720,7 @@ watch(activeTab, (tab) => {
           </div>
         </div>
       </div>
+
     </div>
   </div>
 </template>
@@ -419,15 +739,7 @@ watch(activeTab, (tab) => {
 }
 
 .elderly-page {
-  --font-multiplier: 1;
-  --app-font:
-    "PingFang SC",
-    "HarmonyOS Sans SC",
-    "Microsoft YaHei UI",
-    "Noto Sans SC",
-    "Source Han Sans SC",
-    "Segoe UI",
-    sans-serif;
+  --font-multiplier: 0.6;
   width: 100%;
   max-width: 400px;
   height: min(770px, calc(100vh - 40px));
@@ -437,8 +749,8 @@ watch(activeTab, (tab) => {
   display: flex;
   flex-direction: column;
   position: relative;
-  font-family: var(--app-font);
-  letter-spacing: 0.2px;
+  font-family: inherit;
+  letter-spacing: 0.18px;
   text-rendering: optimizeLegibility;
 }
 
@@ -448,7 +760,7 @@ watch(activeTab, (tab) => {
 }
 
 .elderly-page.font-xxl {
-  --font-multiplier: 1.2;
+  --font-multiplier: 1.08;
 }
 
 .header {
@@ -478,6 +790,21 @@ watch(activeTab, (tab) => {
   padding: 0 8px;
   font-size: calc(12px * var(--font-multiplier));
   font-weight: 700;
+}
+
+.settings-toggle {
+  position: absolute;
+  right: 72px;
+  top: 12px;
+  border: none;
+  background: linear-gradient(90deg, #198ec8 0%, #43a8ff 100%);
+  color: #fff;
+  border-radius: 8px;
+  height: 28px;
+  min-width: 56px;
+  padding: 0 10px;
+  font-size: calc(12px * var(--font-multiplier));
+  font-weight: 800;
 }
 
 .exit {
@@ -771,13 +1098,13 @@ watch(activeTab, (tab) => {
 
 .nav {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   background: linear-gradient(180deg, #fdfefe 0%, #f3f7fb 100%);
   border-top: 1px solid #d6e2ef;
 }
 
 .nav-item {
-  height: 110px;
+  height: 95px;
   border: none;
   background: transparent;
   font-size: 32px;
@@ -836,6 +1163,23 @@ watch(activeTab, (tab) => {
   font-weight: 700;
 }
 
+.record-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.record-cancel-btn {
+  border: none;
+  background: linear-gradient(90deg, #ff4d4f 0%, #ff7875 100%);
+  color: #fff;
+  border-radius: 10px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .status-待确认 {
   color: #d97706;
 }
@@ -855,17 +1199,27 @@ watch(activeTab, (tab) => {
 }
 
 .voice-action-btn {
-  height: 52px;
+  height: 60px;
   border: none;
   border-radius: 12px;
   background: linear-gradient(90deg, #2389df 0%, #43a8ff 100%);
   color: #fff;
-  font-size: calc(18px * var(--font-multiplier));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: calc(24px * var(--font-multiplier));
   font-weight: 800;
 }
 
 .voice-action-btn.secondary {
   background: linear-gradient(90deg, #00a870 0%, #20bb86 100%);
+}
+
+.voice-icon {
+  width: calc(34px * var(--font-multiplier));
+  height: calc(34px * var(--font-multiplier));
+  flex-shrink: 0;
 }
 
 .voice-box {
@@ -934,5 +1288,61 @@ watch(activeTab, (tab) => {
   padding: 0 10px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #111827;
+  font-size: 14px;
+}
+
+.setting-checkbox-row {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.setting-switch-row .el-switch {
+  transform: scale(0.92);
+  transform-origin: right center;
+}
+
+.setting-label {
+  font-weight: 800;
+}
+
+.setting-btn-row {
+  display: flex;
+  gap: 10px;
+}
+
+.setting-action-btn {
+  border: none;
+  background: #e5edf5;
+  color: #1f2937;
+  border-radius: 10px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.setting-action-btn.active {
+  background: linear-gradient(90deg, #2389df 0%, #43a8ff 100%);
+  color: #fff;
+}
+
+.setting-tip {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
 }
 </style>

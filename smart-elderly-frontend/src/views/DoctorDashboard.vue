@@ -47,20 +47,59 @@ const fetchScheduleGrid = async () => {
     const res = await request.get('/api/doctor/schedule')
     if (res.data.code === 200) {
       const apiData = res.data.data // 后端返回的真实排班
-      
-      // 遍历后端数据，拼装“上午/下午/全天”
+
+      // 每次刷新都先清空
+      schedule.value = schedule.value.map(item => ({ ...item, value: '' }))
+
+      const parseBookedMax = (note) => {
+        // note: 门诊接诊 (已约: 3 / 15，待确认: 1) 满
+        const m = String(note || '').match(/已约:\s*(\d+)\s*\/\s*(\d+)/)
+        if (!m) return null
+        return { booked: Number(m[1]), max: Number(m[2]) }
+      }
+
+      const dayAgg = {} // day -> am/pm booked & max
       apiData.forEach(apiItem => {
-        // 找到我们格子里对应的那一天（比如找到 '周二'）
-        const target = schedule.value.find(s => s.day === apiItem.day)
-        if (target) {
-          const isAm = apiItem.time.includes('上午')
-          const str = isAm ? '上午 ✓' : '下午 ✓'
-          
-          if (target.value === '') {
-            target.value = str // 如果是空的，直接填入
-          } else if (target.value !== str) {
-            target.value = '全天 ✓' // 如果原本有上午，新来个下午，就变成全天
+        const day = apiItem.day
+        const isAm = String(apiItem.time || '').includes('上午')
+        if (!dayAgg[day]) {
+          dayAgg[day] = { am: { has: false, booked: 0, max: 0 }, pm: { has: false, booked: 0, max: 0 } }
+        }
+
+        const parsed = parseBookedMax(apiItem.note)
+        if (parsed) {
+          if (isAm) {
+            dayAgg[day].am = { has: true, booked: parsed.booked, max: parsed.max }
+          } else {
+            dayAgg[day].pm = { has: true, booked: parsed.booked, max: parsed.max }
           }
+        } else {
+          // 兜底：后端 note 解析失败时仍标记有排班
+          if (isAm) dayAgg[day].am.has = true
+          else dayAgg[day].pm.has = true
+        }
+      })
+
+      // 把统计结果写回 7 天网格
+      schedule.value.forEach(cell => {
+        const info = dayAgg[cell.day]
+        if (!info) return
+
+        const hasAm = info.am.has
+        const hasPm = info.pm.has
+
+        if (hasAm && hasPm) {
+          const bookedTotal = info.am.booked + info.pm.booked
+          const maxTotal = info.am.max + info.pm.max
+          cell.value = `全天 已约:${bookedTotal}/${maxTotal}`
+        } else if (hasAm) {
+          cell.value = info.am.max > 0
+            ? `上午 已约:${info.am.booked}/${info.am.max}`
+            : '上午 ✓'
+        } else if (hasPm) {
+          cell.value = info.pm.max > 0
+            ? `下午 已约:${info.pm.booked}/${info.pm.max}`
+            : '下午 ✓'
         }
       })
     }
@@ -90,6 +129,7 @@ const handleAppointment = async (appointId, action) => {
 }
 
 const goLogin = () => {
+  localStorage.removeItem('token_2')
   localStorage.removeItem('token')
   router.push('/login')
 }
