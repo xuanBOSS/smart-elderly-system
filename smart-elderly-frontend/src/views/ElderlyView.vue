@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { House, User, Star, Search, Setting } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -256,15 +256,47 @@ const sendEmergencyReal = async () => {
       ElMessage.error(data.message || '报警失败，请稍后重试')
       return
     }
-    const helpId = data.data?.helpId
-    const finalLocation = data.data?.location || '未登记家庭住址'
-    const handleResult = data.data?.handleResult || '老人发起一键报警'
-    ElMessage.success(`报警成功，工单号 ${helpId}；位置：${finalLocation}；状态：${handleResult}`)
-    if (sosGeoWarnEnabled.value && (geo.latitude == null || geo.longitude == null)) {
-      ElMessage.warning('本次未获取到实时定位，已回退为默认地址，请检查浏览器定位权限')
-    }
+    const helpId = data.data?.helpId // 拿到后端刚刚生成的那条救命工单的 ID
+    ElMessage.success('SOS 信号已发出！社区大屏已亮起红灯！')
+
+    speak("救援已呼叫。能听到吗？请告诉我您遇到了什么情况？", () => {
+      // 只有等系统这句话彻底读完闭嘴了，才打开麦克风！
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+      if (!SpeechRecognition) return
+
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'zh-CN'
+      recognition.continuous = false
+      recognition.interimResults = false
+
+      recognition.onstart = () => {
+        ElMessage({ message: '🎙️ 正在倾听您的情况...', type: 'warning', duration: 8000 })
+      }
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript
+        console.log("老人补充的求救情况：", transcript)
+        
+        // 🌟 动作 3：把老人补充的伤情，更新到那条报警记录里！
+        await request.post('/api/elderly/emergency/updateDesc', {
+          helpId: helpId,
+          desc: transcript
+        })
+        speak("收到，已经把您的具体情况同步给社区救援人员。")
+      }
+
+      recognition.onerror = () => {
+        // 如果老人疼得说不出话，或者周围太吵没识别出来
+        // 不做任何报错，因为救命的第一步早就发出了！
+        speak("请您保持体力，救援人员马上就到。")
+      }
+
+      recognition.start()
+    })
+
   } catch (error) {
-    ElMessage.error(withFriendlyError(error, '报警失败，请稍后重试'))
+    ElMessage.error(withFriendlyError(error, '报警失败，请检查网络'))
+    speak("网络异常，请立刻拨打 1 2 0。")
   }
 }
 
@@ -423,27 +455,151 @@ const cancelAppointment = async (item) => {
   }
 }
 
+// ================= 🌟 1. 语音播报 (TTS - 系统的嘴巴) =================
+const speak = (text, onEndCallback = null) => {
+  if (!('speechSynthesis' in window)) {
+    ElMessage.error('当前浏览器不支持语音播报')
+    if (onEndCallback) onEndCallback()
+    return
+  }
+  window.speechSynthesis.cancel() // 停止正在播放的语音
+  
+  const msg = new SpeechSynthesisUtterance(text)
+  msg.lang = 'zh-CN'
+  msg.rate = 0.85
+  msg.pitch = 1
+  
+  // 🌟 核心魔法：当系统彻底读完这句话时，触发回调！
+  if (onEndCallback) {
+    msg.onend = () => {
+      onEndCallback()
+    }
+  }
+  
+  window.speechSynthesis.speak(msg)
+}
+
+// 替换原来的 startVoiceBroadcast
+const startVoiceBroadcast = () => {
+  ElMessage.success('正在为您播报...')
+  speak(voiceBroadcastText.value) // 直接读出你写的完美文案！
+}
+
+// ================= 🌟 2. 语音录入 (ASR - 系统的耳朵) =================
+const isListening = ref(false)
+
+const processVoiceData = async (text) => {
+  const userId = getCurrentUserId()
+  if (!userId) {
+    speak("请您先登录系统")
+    return
+  }
+
+  try {
+    // 调用我们刚刚写好的后端神仙接口
+    const { data } = await request.post('/api/elderly/voice/intent', {
+      userId: userId,
+      text: text
+    })
+
+    if (data.code === 200) {
+      // 1. 界面弹窗提示成功
+      ElMessage.success(data.data)
+      // 2. 让电脑把后端的成功提示（如"体征数据已自动记录..."）朗读出来！
+      speak(data.data)
+      
+      // 3. 极度丝滑的细节：自动刷新页面数据
+      if (data.data.includes('健康档案')) {
+        loadHealth() // 刷新健康板块的数字
+      } else if (data.data.includes('预约')) {
+        loadAppointmentRecords() // 刷新预约记录列表
+      }
+    } else {
+      speak("处理失败了，" + (data.message || "未知错误"))
+    }
+  } catch (error) {
+    console.error(error)
+    speak("抱歉，系统网络好像有点问题，请稍后再试。")
+  }
+}
+
 const openVoiceBooking = () => {
-  showVoicePanel.value = true
-  voiceText.value = '我要预约明天上午门诊'
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!SpeechRecognition) {
+    ElMessageBox.alert('抱歉，您的浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器。', '提示')
+    showVoicePanel.value = true
+    voiceText.value = '我要预约明天上午门诊'
+    return
+  }
+
+  const recognition = new SpeechRecognition()
+  recognition.lang = 'zh-CN'
+  recognition.continuous = false
+  recognition.interimResults = false
+
+  // 1. 刚点按钮，状态变更为准备中
+  isListening.value = true
+  
+  // 2. 🌟 让系统先说话，并传入一个回调函数（说话结束后才执行）
+  speak("我在听，请告诉我您的身体状况，血压多少，血糖多少，心率如何，或者您想预约哪天看病？", () => {
+    
+    // 3. 🌟 系统的嘴巴闭上了，现在立刻弹出提示，并正式打开麦克风！
+    ElMessage({
+      message: '🎙️ 现在请说话...',
+      type: 'warning',
+      duration: 5000
+    })
+    
+    try {
+      recognition.start() // 正式启动麦克风
+    } catch (e) {
+      console.error("麦克风启动异常", e)
+      isListening.value = false
+    }
+  })
+
+  // 麦克风开始录音时的事件
+  recognition.onstart = () => {
+    console.log("麦克风已真实开启")
+  }
+
+  // 监听到老人的话
+  recognition.onresult = async (event) => {
+    const transcript = event.results[0][0].transcript
+    console.log("老人说的话：", transcript)
+    
+    ElMessageBox.confirm(`系统听到您说：<br/><b style="color:#409EFF;font-size:18px">“${transcript}”</b><br/><br/>正在为您智能处理...`, '语音识别成功', {
+      dangerouslyUseHTMLString: true,
+      showCancelButton: false,
+      confirmButtonText: '好的'
+    })
+    
+    // 发给后端 DeepSeek 处理
+    await processVoiceData(transcript)
+  }
+
+  recognition.onerror = (event) => {
+    console.error('语音识别错误', event.error)
+    speak("抱歉，我没有听清，请您稍微大点声再说一遍。")
+    isListening.value = false
+  }
+
+  recognition.onend = () => {
+    isListening.value = false
+  }
 }
 
 const submitVoiceBooking = () => {
   if (!voiceText.value.trim()) {
-    ElMessage.warning('请先输入或录入预约内容')
+    ElMessage.warning('请先输入或录入内容')
     return
   }
-  ElMessage.success('语音预约内容已提交（演示 UI）')
+  ElMessage.success('语音内容已提交（手动录入）')
   showVoicePanel.value = false
-}
-
-const startVoiceBroadcast = () => {
-  ElMessage.success('开始语音播报（演示 UI）')
 }
 
 onMounted(async () => {
   try {
-    // 首屏只加载首页必需数据，确保进入速度
     await Promise.all([loadUserInfo(), loadHealth()])
     await loadAppointmentRecords()
   } finally {
@@ -463,15 +619,9 @@ watch(showRecordDrawer, (open) => {
     clearInterval(appointmentRefreshTimer)
     appointmentRefreshTimer = null
   }
-
   if (!open) return
-
-  // 抽屉打开后至少拉一次
   loadAppointmentRecords()
-
-  // 可选：是否开启自动刷新
   if (!appointmentAutoRefreshEnabled.value) return
-
   appointmentRefreshTimer = setInterval(() => {
     loadAppointmentRecords()
   }, 3000)
@@ -515,7 +665,7 @@ watch(showRecordDrawer, (open) => {
                   d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm7-3a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 1 0-2 0 7 7 0 0 0 6 6.93V21H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-3.07A7 7 0 0 0 19 11Z"
                 />
               </svg>
-              语音预约
+              {{ isListening ? '正在聆听...' : '语音录入' }}
             </button>
             <button class="voice-action-btn secondary" @click="startVoiceBroadcast">
               <svg class="voice-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -709,14 +859,14 @@ watch(showRecordDrawer, (open) => {
       <div v-if="showVoicePanel" class="record-overlay" @click.self="showVoicePanel = false">
         <div class="record-panel">
           <div class="record-header">
-            <div class="record-title">语音预约</div>
+            <div class="record-title">语音预约/录入</div>
             <button class="record-close" @click="showVoicePanel = false">关闭</button>
           </div>
           <div class="voice-box">
-            <div class="voice-tip">模拟语音识别文本（可编辑）</div>
+            <div class="voice-tip">您的浏览器暂不支持麦克风，请手动输入文字内容：</div>
             <textarea v-model="voiceText" class="voice-input" />
             <button class="record-entry voice-submit" @click="submitVoiceBooking">确认提交</button>
-            <div class="voice-tip">语音播报示例：{{ voiceBroadcastText }}</div>
+            <div class="voice-tip">播报示例：{{ voiceBroadcastText }}</div>
           </div>
         </div>
       </div>
