@@ -171,7 +171,7 @@ onMounted(() => {
   max-width: 880px;
   margin: 0 auto;
   padding: 24px;
-  background: #f0f2f5;
+  background: transparent;
 }
 
 .page-header {
@@ -185,18 +185,20 @@ onMounted(() => {
 .page-header h1 {
   margin: 0;
   font-size: 24px;
-  color: #303133;
+  color: #203449;
 }
 
 .page-header p {
   margin: 6px 0 0;
-  color: #606266;
+  color: #70839a;
 }
 
 .archives-card {
-  background: #fff;
-  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%);
+  border-radius: 14px;
   padding: 20px;
+  border: 1px solid #dce7f3;
+  box-shadow: 0 8px 20px rgba(30, 63, 100, 0.08);
 }
 
 .archive-row {
@@ -204,7 +206,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 18px 0;
-  border-bottom: 1px solid #f2f3f5;
+  border-bottom: 1px solid #eaf0f6;
 }
 
 .archive-row:last-child {
@@ -218,13 +220,13 @@ onMounted(() => {
 .archive-name {
   font-size: 18px;
   font-weight: 700;
-  color: #303133;
+  color: #22374e;
 }
 
 .archive-condition {
   margin-top: 8px;
   font-size: 14px;
-  color: #606266;
+  color: #6f839a;
 }
 
 .danger-text {
@@ -235,15 +237,16 @@ onMounted(() => {
 .archive-meta {
   text-align: right;
   font-size: 14px;
-  color: #606266;
+  color: #6f839a;
 }
 
 .indicator-row {
   display: flex;
   justify-content: space-around;
-  background: #f7f8fa;
+  background: linear-gradient(180deg, #f7fbff 0%, #eff5fc 100%);
   padding: 16px;
   border-radius: 8px;
+  border: 1px solid #dbe7f3;
 }
 
 .indicator-box {

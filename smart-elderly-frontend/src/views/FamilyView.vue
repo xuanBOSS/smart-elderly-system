@@ -181,11 +181,18 @@ onUnmounted(() => {
 <template>
   <div class="family-page">
     <div class="family-header">
-      <div class="family-title">家属监护端</div>
-      <el-button type="text" class="exit-link" @click="goLogin">退出</el-button>
+      <div class="family-title-wrap">
+        <div class="family-title">家属智慧监护端</div>
+        <div class="family-subtitle">实时关注长者健康趋势与社区动态</div>
+      </div>
+      <div class="header-actions">
+        <span class="ai-tag">AI 护理模式</span>
+        <el-button type="text" class="exit-link" @click="goLogin">退出</el-button>
+      </div>
     </div>
 
     <div class="customer-tabs">
+      <div class="tabs-title">我的家人</div>
       <button
         v-for="item in customerList"
         :key="item.elderId"
@@ -269,73 +276,127 @@ onUnmounted(() => {
   min-height: 100vh;
   max-width: 480px;
   margin: 0 auto;
-  background: #f7f8fa;
+  background: linear-gradient(180deg, #f3f7fd 0%, #edf3fb 100%);
   padding-bottom: 24px;
 }
 
 .family-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
+  align-items: flex-start;
+  padding: 16px 20px 14px;
+  background: linear-gradient(135deg, #1f4d92 0%, #2f74c8 100%);
+  border-bottom: none;
+  color: #fff;
+}
+
+.family-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .family-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
-  color: #303133;
+  color: #fff;
+}
+
+.family-subtitle {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-tag {
+  height: 24px;
+  line-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .exit-link {
-  color: #909399;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
 }
 
 .customer-tabs {
   display: flex;
-  flex-wrap: wrap; /* 增加换行，防止绑定的老人太多挤出去 */
+  flex-wrap: wrap;
   gap: 12px;
   background: #fff;
   padding: 12px 20px 20px;
+  border-bottom: 1px solid #e6eef8;
+}
+
+.tabs-title {
+  width: 100%;
+  font-size: 13px;
+  color: #6b7a90;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
 .customer-tab {
-  border: none;
+  border: 1px solid #d9e7f6;
   border-radius: 20px;
   padding: 8px 20px;
   font-size: 15px;
-  color: #4b5563;
-  background: #f5f7fa;
+  color: #3f4f64;
+  background: #f5f9ff;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .customer-tab.active {
-  background: #1890ff;
+  background: linear-gradient(90deg, #2185e8 0%, #3aa0ff 100%);
   color: #fff;
+  border-color: transparent;
+  box-shadow: 0 6px 14px rgba(33, 133, 232, 0.28);
 }
 
-/* 新增：添加按钮的样式微调 */
 .add-btn {
-  background: #e6f7ff;
-  color: #1890ff;
-  border: 1px dashed #91d5ff;
+  background: #edf8ff;
+  color: #1a84de;
+  border: 1px dashed #85bdf0;
 }
 
 .trend-card,
 .summary-card,
 .notice-card {
-  background: #fff;
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 16px;
   margin: 12px 16px;
   padding: 20px;
+  border: 1px solid #dfeaf6;
+  box-shadow: 0 8px 24px rgba(34, 73, 120, 0.08);
 }
 
 .section-title {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
-  color: #303133;
+  color: #24364d;
   margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title::before {
+  content: '';
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #1f8dd6 0%, #42b0ff 100%);
 }
 
 .trend-chart {
@@ -357,18 +418,19 @@ onUnmounted(() => {
 .summary-value {
   font-size: 22px;
   font-weight: 700;
+  letter-spacing: 0.3px;
 }
 
 .summary-unit {
   font-size: 12px;
-  color: #909399;
+  color: #8a98a9;
   margin-top: 4px;
 }
 
 .summary-name {
   margin-top: 8px;
   font-size: 13px;
-  color: #909399;
+  color: #8a98a9;
 }
 
 .notice-item {
@@ -402,7 +464,8 @@ onUnmounted(() => {
 
 .notice-text {
   font-size: 14px;
-  color: #303133;
+  color: #334155;
+  line-height: 1.4;
 }
 
 .notice-urgent .notice-text {
@@ -411,12 +474,11 @@ onUnmounted(() => {
 
 .notice-time {
   font-size: 12px;
-  color: #909399;
+  color: #94a3b8;
   white-space: nowrap;
   margin-left: 8px;
 }
 
-/* 弹窗底部按钮居中 */
 .dialog-footer {
   display: flex;
   justify-content: center;

@@ -34,6 +34,7 @@ public class HealthController {
         LambdaQueryWrapper<HealthRecords> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(HealthRecords::getUserId, elderId)
                 .orderByDesc(HealthRecords::getRecordTime)
+                .orderByDesc(HealthRecords::getRecordId)
                 .last("LIMIT 7");
         List<HealthRecords> records = healthRecordsMapper.selectList(wrapper);
 
