@@ -16,6 +16,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -78,35 +79,23 @@ public class DoctorController {
 
     @PostMapping("/appointments/handle")
     @Operation(summary = "处理预约(确认或拒绝)")
-    public Result<String> handleAppointment(@RequestParam Long appointId, @RequestParam Integer action) {
+    public Result<String> handleAppointment(
+            @RequestParam Long appointId,
+            @RequestParam Integer action,
+            HttpServletRequest request) {
+        Long doctorId = Long.valueOf(request.getAttribute("userId").toString());
+
         Appointment appointment = appointmentMapper.selectById(appointId);
         if (appointment == null) {
             return Result.error("未找到该预约记录");
+        }
+        if (appointment.getDoctorId() == null || !appointment.getDoctorId().equals(doctorId)) {
+            return Result.error("无权处理他人的预约");
         }
 
         // 1. 更新预约单状态
         appointment.setStatus(action);
         appointmentMapper.updateById(appointment);
-
-        // 如果是确认预约 (action = 1)，则去排班表里把“已约人数” + 1
-        if (action == 1) {
-            // 从预约时间中提取 年月日 和 小时
-            java.time.LocalDate appointDate = appointment.getAppointTime().toLocalDate();
-            int hour = appointment.getAppointTime().getHour();
-            int timeSlot = hour < 12 ? 0 : 1; // 12点前算上午(0)，否则算下午(1)
-
-            // 去排班表里精准定位这名医生、这一天、这个时段的排班
-            LambdaQueryWrapper<DoctorSchedule> scheduleWrapper = new LambdaQueryWrapper<>();
-            scheduleWrapper.eq(DoctorSchedule::getDoctorId, appointment.getDoctorId())
-                    .eq(DoctorSchedule::getWorkDate, appointDate)
-                    .eq(DoctorSchedule::getTimeSlot, timeSlot);
-
-            DoctorSchedule schedule = doctorScheduleMapper.selectOne(scheduleWrapper);
-            if (schedule != null) {
-                schedule.setBookedCount(schedule.getBookedCount() + 1); // 人数 +1
-                doctorScheduleMapper.updateById(schedule);
-            }
-        }
 
         return Result.success(action == 1 ? "预约已确认" : "预约已拒绝");
     }
@@ -153,7 +142,7 @@ public class DoctorController {
             if (latestRecord != null) {
                 map.put("lastVisit", latestRecord.getRecordTime().format(DateTimeFormatter.ofPattern("MM/dd")));
 
-                // 💡 简单的 AI 疾病推断逻辑（后续可以换成真的大模型预测）
+                // 简单的 AI 疾病推断逻辑（后续可以换成真的大模型预测）
                 String condition = "指标平稳";
                 if (latestRecord.getBloodPressureHigh() >= 140) condition = "血压偏高";
                 else if (latestRecord.getBloodSugar() >= 7.0) condition = "血糖偏高";
@@ -197,23 +186,31 @@ public class DoctorController {
             String timeStr = schedule.getTimeSlot() == 0 ? "上午 08:00 - 12:00" : "下午 14:00 - 18:00";
             map.put("time", schedule.getWorkDate().format(dateFormatter) + " " + timeStr);
 
-            // 组装备注信息（医生排班“已约/待确认/是否满号”）
-            int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
+            // 组装备注信息（统一从 appointment 实时统计）
             int maxCapacity = schedule.getMaxCapacity() == null ? 0 : schedule.getMaxCapacity();
 
             java.time.LocalDate workDate = schedule.getWorkDate();
             LocalDateTime start = workDate.atStartOfDay();
             LocalDateTime end = workDate.atTime(LocalTime.MAX);
 
-            // 待确认预约：老人提交但医生尚未确认(status=0)
-            List<Appointment> pendingAppts = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
+            List<Appointment> activeAppts = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
                     .eq(Appointment::getDoctorId, doctorId)
-                    .eq(Appointment::getStatus, 0)
+                    .in(Appointment::getStatus, 0, 1)
                     .between(Appointment::getAppointTime, start, end));
 
             int timeSlot = schedule.getTimeSlot() == null ? 0 : schedule.getTimeSlot();
-            long pendingCount = pendingAppts.stream()
+            long pendingCount = activeAppts.stream()
                     .filter(a -> a.getAppointTime() != null)
+                    .filter(a -> a.getStatus() != null && a.getStatus() == 0)
+                    .filter(a -> {
+                        int hour = a.getAppointTime().getHour();
+                        int apptSlot = hour < 12 ? 0 : 1;
+                        return apptSlot == timeSlot;
+                    })
+                    .count();
+            long confirmedCount = activeAppts.stream()
+                    .filter(a -> a.getAppointTime() != null)
+                    .filter(a -> a.getStatus() != null && a.getStatus() == 1)
                     .filter(a -> {
                         int hour = a.getAppointTime().getHour();
                         int apptSlot = hour < 12 ? 0 : 1;
@@ -222,18 +219,76 @@ public class DoctorController {
                     .count();
 
             // 用于判断是否满号：已约(确认) + 待确认(占用但未接诊)
-            int reservedCount = bookedCount + (int) pendingCount;
+            int reservedCount = (int) confirmedCount + (int) pendingCount;
             String fullTag = (maxCapacity > 0 && reservedCount >= maxCapacity) ? " 满" : "";
 
             // 关键：这里把“已约”和“待确认”拆开显示
             // 这样老人提交会增加待确认；医生确认后待确认减少、已约增加，数字会明显变化。
             map.put("note",
-                    "门诊接诊 (已约: " + bookedCount + " / " + maxCapacity +
+                    "门诊接诊 (已约: " + confirmedCount + " / " + maxCapacity +
                             "，待确认: " + pendingCount + fullTag + ")");
+            map.put("workDate", schedule.getWorkDate().toString());
+            map.put("scheduleId", schedule.getScheduleId());
+            map.put("timeSlot", schedule.getTimeSlot());
 
             resultList.add(map);
         }
 
         return Result.success(resultList);
+    }
+
+    @GetMapping("/schedule/dayPatients")
+    @Operation(summary = "按排班日期查看已预约患者")
+    public Result<List<Map<String, Object>>> getDayPatients(
+            @RequestParam(required = false) Long scheduleId,
+            @RequestParam(required = false) String workDate,
+            @RequestParam(required = false) Integer timeSlot,
+            HttpServletRequest request) {
+        Long doctorId = Long.valueOf(request.getAttribute("userId").toString());
+        LocalDate date;
+        Integer slot;
+
+        if (scheduleId != null) {
+            DoctorSchedule schedule = doctorScheduleMapper.selectById(scheduleId);
+            if (schedule == null || schedule.getDoctorId() == null || !schedule.getDoctorId().equals(doctorId)) {
+                return Result.error("排班不存在或无权限查看");
+            }
+            date = schedule.getWorkDate();
+            slot = schedule.getTimeSlot();
+        } else if (workDate != null && !workDate.isBlank() && timeSlot != null) {
+            date = LocalDate.parse(workDate);
+            slot = timeSlot;
+        } else {
+            return Result.error("请提供 scheduleId 或 workDate+timeSlot");
+        }
+
+        LocalDateTime start = date.atStartOfDay();
+        LocalDateTime end = date.atTime(LocalTime.MAX);
+
+        List<Appointment> appointments = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
+                .eq(Appointment::getDoctorId, doctorId)
+                .in(Appointment::getStatus, 0, 1)
+                .between(Appointment::getAppointTime, start, end)
+                .orderByAsc(Appointment::getAppointTime));
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Appointment appt : appointments) {
+            if (appt.getAppointTime() == null) continue;
+            int apptSlot = appt.getAppointTime().getHour() < 12 ? 0 : 1;
+            if (!apptSlotEquals(slot, apptSlot)) continue;
+
+            User elder = userMapper.selectById(appt.getUserId());
+            Map<String, Object> map = new HashMap<>();
+            map.put("elderName", elder != null ? elder.getRealName() : "未知患者");
+            map.put("appointTime", appt.getAppointTime() != null ? appt.getAppointTime().format(formatter) : "");
+            map.put("statusText", appt.getStatus() != null && appt.getStatus() == 1 ? "已确认" : "待确认");
+            rows.add(map);
+        }
+        return Result.success(rows);
+    }
+
+    private boolean apptSlotEquals(Integer scheduleSlot, int apptSlot) {
+        return scheduleSlot != null && scheduleSlot == apptSlot;
     }
 }

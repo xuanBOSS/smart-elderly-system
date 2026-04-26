@@ -1,9 +1,7 @@
-# DoctorView.vue - 医生主界面组件，包含侧边导航和内容区域
-
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { List, Calendar, Document, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { List, Calendar, Document, ArrowLeft, ArrowRight, SwitchButton } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -23,6 +21,12 @@ const navigate = (path) => {
   router.push(path)
 }
 
+const goLogin = () => {
+  localStorage.removeItem('token_2')
+  localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
+  router.push('/login')
+}
 
 const activePath = computed(() => route.path)
 </script>
@@ -50,12 +54,23 @@ const activePath = computed(() => route.path)
         </div>
       </nav>
 
-      
+      <div class="doctor-logout" @click="goLogin">
+        <SwitchButton class="logout-icon" />
+        <span v-if="!isCollapsed">退出登录</span>
+      </div>
     </aside>
 
     <main class="doctor-main" :style="{ marginLeft: isCollapsed ? '60px' : '220px' }">
       <router-view />
     </main>
+
+    <el-button
+      class="logout-floating-btn"
+      type="danger"
+      @click="goLogin"
+    >
+      退出登录
+    </el-button>
   </div>
 
   
@@ -172,29 +187,66 @@ const activePath = computed(() => route.path)
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
   cursor: pointer;
-  padding: 12px 0;
+  padding: 6px 8px;
+  min-height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  transition: all 0.2s ease;
+}
+
+.doctor-logout:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .doctor-logout span {
   display: inline-block;
+  font-weight: 600;
 }
 
 .logout-icon {
   margin-right: 6px;
+  width: 15px;
+  height: 15px;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.logout-icon :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.doctor-sider.collapsed .doctor-logout {
+  padding: 8px 0;
+  border-radius: 8px;
+}
+
+.doctor-sider.collapsed .logout-icon {
+  margin-right: 0;
 }
 
 .doctor-main {
   flex: 1;
-  min-width: 800px;
+  min-width: 0;
+  width: 100%;
   max-width: calc(100vw - 60px);
   background: linear-gradient(180deg, #eef4fb 0%, #e8eff8 100%);
   padding: 24px;
   overflow-y: auto;
   height: 100vh;
   transition: margin-left 0.3s ease;
+}
+
+.logout-floating-btn {
+  position: fixed;
+  left: 12px;
+  bottom: 24px;
+  z-index: 100;
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(245, 108, 108, 0.28);
 }
 
 .doctor-topbar {

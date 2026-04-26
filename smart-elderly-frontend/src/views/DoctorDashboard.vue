@@ -1,10 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
 import request from '@/utils/request' // 🌟 引入咱们的网络大总管
 
-const router = useRouter()
 const weekMap = ['日', '一', '二', '三', '四', '五', '六']
 const now = new Date()
 const currentDate = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekMap[now.getDay()]}`
@@ -128,12 +126,6 @@ const handleAppointment = async (appointId, action) => {
   } catch (cancel) {}
 }
 
-const goLogin = () => {
-  localStorage.removeItem('token_2')
-  localStorage.removeItem('token')
-  router.push('/login')
-}
-
 // 页面加载时自动去拿数据
 onMounted(() => {
   fetchAppointments()
@@ -164,7 +156,7 @@ onMounted(() => {
       <div class="section-title">
         待处理预约 <span class="appointment-count">（{{ appointments.length }}）</span>
       </div>
-      
+      <div class="table-wrap">
       <el-table :data="appointments" stripe border style="width: 100%;" v-loading="loading">
         <el-table-column prop="name" label="患者姓名" width="120" />
         <el-table-column prop="time" label="预约时间" width="180" />
@@ -181,11 +173,18 @@ onMounted(() => {
           <el-empty description="太棒了，所有预约都已处理完毕！" />
         </template>
       </el-table>
+      </div>
     </section>
+
   </div>
 </template>
 
 <style scoped>
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .doctor-dashboard {
   min-height: 100vh;
   padding-bottom: 24px;
@@ -275,4 +274,5 @@ onMounted(() => {
 .cell-value.inactive {
   color: #c0c4cc;
 }
+
 </style>

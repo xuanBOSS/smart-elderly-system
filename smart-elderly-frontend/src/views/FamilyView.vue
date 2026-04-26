@@ -1,9 +1,8 @@
-# FamilyView.vue - 家属监护端界面组件
-
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
+import { House, DataLine, Bell, Calendar } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
 
@@ -11,6 +10,7 @@ const router = useRouter()
 const chartRef = ref(null)
 let chartInstance = null
 
+const activeTab = ref('home')
 const customerList = ref([])
 const selectedElderId = ref(null)
 const noticeList = ref([])
@@ -20,39 +20,50 @@ const indicatorList = ref([
   { label: '--', unit: 'mmol/L', name: '血糖', color: '#1890FF' }
 ])
 
-// 新增：绑定功能的响应式变量
 const showBindDialog = ref(false)
 const bindLoading = ref(false)
 const bindForm = ref({ username: '', relation: '' })
 
+const doctorsForBooking = ref([])
+const loadingDoctors = ref(false)
+const showBookDialog = ref(false)
+const bookDoctor = ref(null)
+const scheduleRows = ref([])
+const pickedScheduleId = ref(null)
+const loadingSchedules = ref(false)
+
 const initChart = () => {
   if (!chartRef.value) return
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
   chartInstance = echarts.init(chartRef.value)
   chartInstance.setOption({
     color: ['#FF4D4F', '#1890FF', '#52C41A'],
     tooltip: { trigger: 'axis' },
     legend: {
       data: ['收缩压', '舒张压', '心率'],
-      textStyle: { color: '#303133' }
+      bottom: 0,
+      textStyle: { color: '#303133', fontSize: 11 }
     },
-    grid: { top: 20, left: 50, right: 20, bottom: 30 },
+    grid: { top: 16, left: 44, right: 12, bottom: 52, containLabel: false },
     xAxis: {
       type: 'category',
-      data: ['12/14', '12/15', '12/16', '12/17', '12/18', '12/19', '12/20'],
+      data: [],
       axisLine: { lineStyle: { color: '#EBEEF5' } },
-      axisLabel: { color: '#909399' },
-      splitLine: { show: false }
+      axisLabel: { color: '#909399', fontSize: 10, rotate: 28, interval: 0 }
     },
     yAxis: {
       type: 'value',
       axisLine: { lineStyle: { color: '#EBEEF5' } },
-      axisLabel: { color: '#909399' },
+      axisLabel: { color: '#909399', fontSize: 10 },
       splitLine: { lineStyle: { color: '#F2F3F5' } }
     },
     series: [
-      { name: '收缩压', type: 'line', data: [135, 132, 138, 130, 136, 140, 137], smooth: true },
-      { name: '舒张压', type: 'line', data: [85, 80, 88, 82, 86, 90, 87], smooth: true },
-      { name: '心率', type: 'line', data: [72, 75, 70, 74, 73, 76, 71], smooth: true }
+      { name: '收缩压', type: 'line', data: [], smooth: true },
+      { name: '舒张压', type: 'line', data: [], smooth: true },
+      { name: '心率', type: 'line', data: [], smooth: true }
     ]
   })
 }
@@ -104,7 +115,10 @@ const fetchDashboard = async (elderId) => {
     indicatorList.value[0].label = latest.bloodPressure || '--/--'
     indicatorList.value[1].label = latest.heartRate || '--'
     indicatorList.value[2].label = latest.bloodSugar || '--'
+    await nextTick()
+    if (!chartInstance && chartRef.value) initChart()
     updateChart(trend)
+    chartInstance?.resize()
   } catch (error) {
     console.error('获取健康大盘失败:', error)
     ElMessage.error('获取健康大盘失败')
@@ -132,7 +146,6 @@ const handleSelectElder = (elderId) => {
   fetchNotices(elderId)
 }
 
-// 新增：提交绑定老人的请求逻辑
 const submitBind = async () => {
   if (!bindForm.value.username || !bindForm.value.relation) {
     ElMessage.warning('请完整填写账号和亲属关系')
@@ -144,8 +157,8 @@ const submitBind = async () => {
     if (res.data.code === 200) {
       ElMessage.success('绑定成功！')
       showBindDialog.value = false
-      bindForm.value = { username: '', relation: '' } // 清空表单
-      fetchElders() // 重新拉取顶部标签列表
+      bindForm.value = { username: '', relation: '' }
+      fetchElders()
     } else {
       ElMessage.error(res.data.message || '绑定失败')
     }
@@ -157,17 +170,106 @@ const submitBind = async () => {
   }
 }
 
+const loadDoctorsForBooking = async () => {
+  if (!selectedElderId.value) {
+    doctorsForBooking.value = []
+    return
+  }
+  loadingDoctors.value = true
+  try {
+    const res = await request.get('/api/family/doctors-for-booking', {
+      params: { elderId: selectedElderId.value }
+    })
+    if (res.data.code === 200) {
+      doctorsForBooking.value = Array.isArray(res.data.data) ? res.data.data : []
+    } else {
+      doctorsForBooking.value = []
+      ElMessage.error(res.data.message || '获取医生列表失败')
+    }
+  } catch (e) {
+    doctorsForBooking.value = []
+    ElMessage.error('获取医生列表失败')
+  } finally {
+    loadingDoctors.value = false
+  }
+}
+
+const openFamilyBookDialog = async (doctor) => {
+  if (!selectedElderId.value) {
+    ElMessage.warning('请先在「家人」页选择要预约的老人')
+    return
+  }
+  bookDoctor.value = doctor
+  pickedScheduleId.value = null
+  scheduleRows.value = []
+  showBookDialog.value = true
+  loadingSchedules.value = true
+  try {
+    const { data } = await request.get('/api/family/doctorSchedules', {
+      params: { elderId: selectedElderId.value, doctorId: doctor.userId }
+    })
+    if (data.code === 200 && Array.isArray(data.data)) {
+      scheduleRows.value = data.data.filter((row) => Number(row.remainCount) > 0)
+      if (scheduleRows.value.length === 0) {
+        ElMessage.warning('该医生暂无可预约号源')
+      }
+    } else {
+      ElMessage.error(data?.message || '加载排班失败')
+    }
+  } catch (error) {
+    ElMessage.error('加载排班失败')
+  } finally {
+    loadingSchedules.value = false
+  }
+}
+
+const confirmFamilyBook = async () => {
+  if (!pickedScheduleId.value || !selectedElderId.value || !bookDoctor.value) {
+    ElMessage.warning('请选择就诊日期与时段')
+    return
+  }
+  try {
+    const res = await request.post('/api/family/appointment', {
+      userId: selectedElderId.value,
+      doctorId: bookDoctor.value.userId,
+      scheduleId: pickedScheduleId.value
+    })
+    if (res.data.code !== 200) {
+      ElMessage.error(res.data.message || '预约失败')
+      return
+    }
+    showBookDialog.value = false
+    ElMessage.success(`已为老人提交「${bookDoctor.value.realName}」的预约申请`)
+    fetchNotices(selectedElderId.value)
+  } catch {
+    ElMessage.error('预约失败')
+  }
+}
+
 const resizeChart = () => {
   chartInstance?.resize()
 }
 
 const goLogin = () => {
+  localStorage.removeItem('token_1')
   localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
   router.push('/login')
 }
 
+watch(activeTab, (tab) => {
+  if (tab === 'trend') {
+    nextTick(() => {
+      if (!chartInstance && chartRef.value) initChart()
+      if (selectedElderId.value) fetchDashboard(selectedElderId.value)
+    })
+  }
+  if (tab === 'booking') {
+    loadDoctorsForBooking()
+  }
+})
+
 onMounted(() => {
-  initChart()
   fetchElders()
   window.addEventListener('resize', resizeChart)
 })
@@ -179,309 +281,408 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="family-page">
-    <div class="family-header">
-      <div class="family-title-wrap">
-        <div class="family-title">家属智慧监护端</div>
-        <div class="family-subtitle">实时关注长者健康趋势与社区动态</div>
-      </div>
-      <div class="header-actions">
-        <span class="ai-tag">AI 护理模式</span>
-        <el-button type="text" class="exit-link" @click="goLogin">退出</el-button>
-      </div>
-    </div>
-
-    <div class="customer-tabs">
-      <div class="tabs-title">我的家人</div>
-      <button
-        v-for="item in customerList"
-        :key="item.elderId"
-        :class="['customer-tab', { active: selectedElderId === item.elderId }]"
-        @click="handleSelectElder(item.elderId)"
-      >
-        {{ item.name }}
-      </button>
-
-      <button class="customer-tab add-btn" @click="showBindDialog = true">
-        + 添加
-      </button>
-    </div>
-
-    <el-card class="trend-card" shadow="never">
-      <div class="section-title">近7日健康趋势</div>
-      <div ref="chartRef" class="trend-chart"></div>
-    </el-card>
-
-    <el-card class="summary-card" shadow="never">
-      <div class="summary-row">
-        <div class="summary-item" v-for="item in indicatorList" :key="item.name">
-          <div class="summary-value" :style="{ color: item.color }">{{ item.label }}</div>
-          <div class="summary-unit">{{ item.unit }}</div>
-          <div class="summary-name">{{ item.name }}</div>
+  <div class="family-shell">
+    <div class="family-page">
+      <header class="family-top">
+        <div>
+          <div class="family-title">家属监护</div>
+          <div class="family-sub">健康与预约</div>
         </div>
-      </div>
-    </el-card>
+        <el-button type="primary" link class="exit-btn" @click="goLogin">退出</el-button>
+      </header>
 
-    <el-card class="notice-card" shadow="never">
-      <div class="section-title">消息通知</div>
-      <el-empty v-if="noticeList.length === 0" description="暂无新消息" :image-size="60" />
-      <div
-        v-for="(notice, index) in noticeList"
-        v-else
-        :key="notice.id"
-        class="notice-item"
-        :class="{
-          'notice-urgent': notice.type === 'URGENT',
-          'notice-last': index === noticeList.length - 1
-        }"
-      >
-        <span
-          class="notice-dot"
-          :class="{
-            'notice-dot-red': notice.type === 'URGENT',
-            'notice-dot-blue': notice.type === 'INFO',
-            'notice-dot-orange': notice.type === 'WARNING'
-          }"
-        ></span>
-        <div class="notice-content">
-          <div class="notice-text">{{ notice.content }}</div>
-          <div class="notice-time">{{ notice.time }}</div>
+      <main class="family-scroll">
+        <template v-if="activeTab === 'home'">
+          <div class="block">
+            <div class="block-title">我的家人</div>
+            <div class="chip-row">
+              <button
+                v-for="item in customerList"
+                :key="item.elderId"
+                type="button"
+                :class="['chip', { active: selectedElderId === item.elderId }]"
+                @click="handleSelectElder(item.elderId)"
+              >
+                {{ item.name }}
+              </button>
+              <button type="button" class="chip add" @click="showBindDialog = true">+ 绑定</button>
+            </div>
+          </div>
+          <div class="block hint">
+            在「趋势」查看近7日曲线，在「消息」查看提醒，在「帮预约」为当前选中老人挂号。
+          </div>
+        </template>
+
+        <template v-else-if="activeTab === 'trend'">
+          <div class="block">
+            <div class="block-title">近7日健康趋势</div>
+            <div ref="chartRef" class="trend-chart" />
+          </div>
+          <div class="metrics">
+            <div v-for="item in indicatorList" :key="item.name" class="metric">
+              <div class="metric-val" :style="{ color: item.color }">{{ item.label }}</div>
+              <div class="metric-unit">{{ item.unit }}</div>
+              <div class="metric-name">{{ item.name }}</div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="activeTab === 'notices'">
+          <div class="block">
+            <div class="block-title">消息通知</div>
+            <el-empty v-if="noticeList.length === 0" description="暂无新消息" :image-size="56" />
+            <div
+              v-for="(notice, index) in noticeList"
+              v-else
+              :key="notice.id"
+              class="notice-row"
+              :class="{ urgent: notice.type === 'URGENT', last: index === noticeList.length - 1 }"
+            >
+              <div class="notice-main">
+                <div class="notice-text">{{ notice.content }}</div>
+                <div class="notice-time">{{ notice.time }}</div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="block">
+            <div class="block-title">帮老人预约</div>
+            <p class="sub">当前老人：{{ customerList.find((c) => c.elderId === selectedElderId)?.name || '请先绑定并选择' }}</p>
+            <div v-loading="loadingDoctors" class="doctor-list">
+              <div v-for="doc in doctorsForBooking" :key="doc.userId" class="doc-row">
+                <span class="doc-name">{{ doc.realName }}</span>
+                <button type="button" class="mini-btn" @click="openFamilyBookDialog(doc)">预约</button>
+              </div>
+              <el-empty v-if="!loadingDoctors && doctorsForBooking.length === 0" description="暂无医生数据" />
+            </div>
+          </div>
+        </template>
+      </main>
+
+      <nav class="family-bottom" aria-label="底部功能切换">
+        <div class="nav-caption">当前页面（高亮）</div>
+        <div class="nav-btn-row">
+        <button type="button" :class="['nav-btn', { on: activeTab === 'home' }]" :aria-current="activeTab==='home'?'page':undefined" @click="activeTab = 'home'">
+          <House class="nav-ic" /><span>家人</span>
+        </button>
+        <button type="button" :class="['nav-btn', { on: activeTab === 'trend' }]" :aria-current="activeTab==='trend'?'page':undefined" @click="activeTab = 'trend'">
+          <DataLine class="nav-ic" /><span>趋势</span>
+        </button>
+        <button type="button" :class="['nav-btn', { on: activeTab === 'notices' }]" :aria-current="activeTab==='notices'?'page':undefined" @click="activeTab = 'notices'">
+          <Bell class="nav-ic" /><span>消息</span>
+        </button>
+        <button type="button" :class="['nav-btn', { on: activeTab === 'booking' }]" :aria-current="activeTab==='booking'?'page':undefined" @click="activeTab = 'booking'">
+          <Calendar class="nav-ic" /><span>帮预约</span>
+        </button>
         </div>
-      </div>
-    </el-card>
+      </nav>
 
-    <el-dialog v-model="showBindDialog" title="绑定老人" width="320px" center>
-      <el-form label-position="top">
-        <el-form-item label="老人登录账号 (如: laowang)">
-          <el-input v-model="bindForm.username" placeholder="请输入老人的账号" clearable />
-        </el-form-item>
-        <el-form-item label="您与老人的关系">
-          <el-input v-model="bindForm.relation" placeholder="如：父子 / 母女" clearable />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
+      <el-dialog v-model="showBindDialog" title="绑定老人" width="320px" center destroy-on-close>
+        <el-form label-position="top">
+          <el-form-item label="老人登录账号">
+            <el-input v-model="bindForm.username" placeholder="如 laowang" clearable />
+          </el-form-item>
+          <el-form-item label="亲属关系">
+            <el-input v-model="bindForm.relation" placeholder="如：父子" clearable />
+          </el-form-item>
+        </el-form>
+        <template #footer>
           <el-button @click="showBindDialog = false">取消</el-button>
-          <el-button type="primary" :loading="bindLoading" @click="submitBind">
-            确认绑定
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
+          <el-button type="primary" :loading="bindLoading" @click="submitBind">确认绑定</el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog
+        v-model="showBookDialog"
+        title="选择预约时段"
+        width="92%"
+        align-center
+        destroy-on-close
+        class="fam-book-dlg"
+      >
+        <div v-loading="loadingSchedules">
+          <el-radio-group v-if="scheduleRows.length" v-model="pickedScheduleId" class="fam-schedule-group">
+            <el-radio
+              v-for="row in scheduleRows"
+              :key="row.scheduleId"
+              :label="row.scheduleId"
+              class="fam-schedule-item"
+            >
+              {{ row.workDate }} {{ row.timeSlotText }} · 剩余 {{ row.remainCount }}
+            </el-radio>
+          </el-radio-group>
+          <el-empty v-else-if="!loadingSchedules" description="暂无可选号源" />
+        </div>
+        <template #footer>
+          <el-button @click="showBookDialog = false">取消</el-button>
+          <el-button type="primary" :disabled="!pickedScheduleId" @click="confirmFamilyBook">确认</el-button>
+        </template>
+      </el-dialog>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.family-page {
+.family-shell {
   min-height: 100vh;
-  max-width: 480px;
-  margin: 0 auto;
-  background: linear-gradient(180deg, #f3f7fd 0%, #edf3fb 100%);
-  padding-bottom: 24px;
-}
-
-.family-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 16px 20px 14px;
-  background: linear-gradient(135deg, #1f4d92 0%, #2f74c8 100%);
-  border-bottom: none;
-  color: #fff;
+  justify-content: center;
+  align-items: stretch;
+  background: linear-gradient(180deg, #e9eff7 0%, #dce6f1 100%);
+  padding: 12px;
 }
 
-.family-title-wrap {
+.family-page {
+  width: 100%;
+  max-width: 400px;
+  min-height: min(780px, calc(100vh - 24px));
+  background: linear-gradient(180deg, #f6f9fe 0%, #e8eef6 100%);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  overflow: hidden;
+  border: 1px solid #d0dce8;
+}
+
+.family-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(90deg, #1f4d92 0%, #2f74c8 100%);
+  color: #fff;
 }
 
 .family-title {
-  font-size: 22px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.family-sub {
+  font-size: 12px;
+  opacity: 0.88;
+  margin-top: 2px;
+}
+
+.exit-btn {
+  color: #fff !important;
   font-weight: 700;
-  color: #fff;
 }
 
-.family-subtitle {
+.family-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 8px;
+}
+
+.block {
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 10px;
+  border: 1px solid #dfeaf6;
+}
+
+.block-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #1e293b;
+  margin-bottom: 10px;
+}
+
+.block.hint {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.8);
+  color: #475569;
+  line-height: 1.45;
 }
 
-.header-actions {
+.chip-row {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.ai-tag {
-  height: 24px;
-  line-height: 24px;
-  padding: 0 10px;
+.chip {
+  border: 1px solid #c5d9ee;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.exit-link {
-  color: rgba(255, 255, 255, 0.9);
+  padding: 8px 14px;
   font-size: 14px;
-}
-
-.customer-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  background: #fff;
-  padding: 12px 20px 20px;
-  border-bottom: 1px solid #e6eef8;
-}
-
-.tabs-title {
-  width: 100%;
-  font-size: 13px;
-  color: #6b7a90;
   font-weight: 600;
-  margin-bottom: 2px;
-}
-
-.customer-tab {
-  border: 1px solid #d9e7f6;
-  border-radius: 20px;
-  padding: 8px 20px;
-  font-size: 15px;
-  color: #3f4f64;
   background: #f5f9ff;
+  color: #334155;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.customer-tab.active {
+.chip.active {
   background: linear-gradient(90deg, #2185e8 0%, #3aa0ff 100%);
   color: #fff;
   border-color: transparent;
-  box-shadow: 0 6px 14px rgba(33, 133, 232, 0.28);
 }
 
-.add-btn {
-  background: #edf8ff;
+.chip.add {
+  border-style: dashed;
   color: #1a84de;
-  border: 1px dashed #85bdf0;
-}
-
-.trend-card,
-.summary-card,
-.notice-card {
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 16px;
-  margin: 12px 16px;
-  padding: 20px;
-  border: 1px solid #dfeaf6;
-  box-shadow: 0 8px 24px rgba(34, 73, 120, 0.08);
-}
-
-.section-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #24364d;
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.section-title::before {
-  content: '';
-  width: 4px;
-  height: 16px;
-  border-radius: 2px;
-  background: linear-gradient(180deg, #1f8dd6 0%, #42b0ff 100%);
 }
 
 .trend-chart {
   width: 100%;
-  height: 220px;
+  height: 240px;
 }
 
-.summary-row {
+.metrics {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
-.summary-item {
+.metric {
   flex: 1;
   min-width: 0;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 8px;
+  border: 1px solid #e2e8f0;
+  text-align: center;
 }
 
-.summary-value {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+.metric-val {
+  font-size: 17px;
+  font-weight: 800;
 }
 
-.summary-unit {
-  font-size: 12px;
-  color: #8a98a9;
+.metric-unit {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.metric-name {
+  font-size: 11px;
+  color: #94a3b8;
   margin-top: 4px;
 }
 
-.summary-name {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #8a98a9;
+.notice-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
 }
 
-.notice-item {
-  display: flex;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid #f2f3f5;
-}
-
-.notice-item.notice-last {
+.notice-row.last {
   border-bottom: none;
 }
 
-.notice-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 12px;
-  flex-shrink: 0;
+.notice-row.urgent .notice-text {
+  color: #dc2626;
+  font-weight: 700;
 }
 
-.notice-dot-red { background: #ff4d4f; }
-.notice-dot-blue { background: #1890ff; }
-.notice-dot-orange { background: #e6a23c; }
-
-.notice-content {
+.notice-main {
   display: flex;
-  justify-content: space-between;
-  width: 100%;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .notice-text {
   font-size: 14px;
   color: #334155;
-  line-height: 1.4;
-}
-
-.notice-urgent .notice-text {
-  color: #ff4d4f;
+  line-height: 1.35;
 }
 
 .notice-time {
   font-size: 12px;
   color: #94a3b8;
-  white-space: nowrap;
-  margin-left: 8px;
 }
 
-.dialog-footer {
+.sub {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0 0 10px;
+}
+
+.doctor-list {
+  min-height: 60px;
+}
+
+.doc-row {
   display: flex;
-  justify-content: center;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mini-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-weight: 800;
+  font-size: 13px;
+  color: #fff;
+  background: linear-gradient(90deg, #2185e8 0%, #3aa0ff 100%);
+  cursor: pointer;
+}
+
+.family-bottom {
+  border-top: 1px solid #d6e2ef;
+  background: #fdfefe;
+  padding: 6px 8px 10px;
+}
+
+.nav-caption {
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.nav-btn-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.nav-btn {
+  border: none;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+.nav-btn.on {
+  color: #1d84de;
+  background: rgba(29, 132, 222, 0.1);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(29, 132, 222, 0.25);
+}
+
+.nav-ic {
+  width: 22px;
+  height: 22px;
+}
+
+.fam-schedule-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.fam-schedule-item {
+  margin-right: 0;
+  height: auto;
+  white-space: normal;
+  align-items: flex-start;
+  line-height: 1.35;
 }
 </style>

@@ -29,7 +29,7 @@ public class CorsConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(jwtInterceptor)
                 .addPathPatterns("/api/**") // 拦截所有 /api 开头的接口
-                .excludePathPatterns("/api/user/login") // 【重要】登录接口必须放行！
+                .excludePathPatterns("/api/user/login") // 登录接口必须放行！
                 .excludePathPatterns("/swagger-ui/**", "/v3/api-docs/**"); // Swagger 放行
     }
 }

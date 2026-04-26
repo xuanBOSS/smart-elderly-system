@@ -8,8 +8,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class AiService {
-
-    // 🔴把这里的字符串替换成你刚刚在网页上复制的 sk-.... 字符串！
     private static final String API_KEY = "sk-e4cbf5bbf68f4ff8a4e469ed1971a9e5";
 
     // DeepSeek 官方接口地址

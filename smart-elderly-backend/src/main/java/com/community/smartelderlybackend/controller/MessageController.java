@@ -4,15 +4,18 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.entity.Appointment;
 import com.community.smartelderlybackend.entity.EmergencyRecord;
+import com.community.smartelderlybackend.entity.FamilyBind;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
 import com.community.smartelderlybackend.mapper.AppointmentMapper;
+import com.community.smartelderlybackend.mapper.FamilyBindMapper;
 import com.community.smartelderlybackend.mapper.EmergencyRecordMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
 import com.community.smartelderlybackend.mapper.UserMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,10 +42,20 @@ public class MessageController {
     private HealthRecordsMapper healthRecordsMapper;
     @Autowired
     private UserMapper userMapper;
+    @Autowired
+    private FamilyBindMapper familyBindMapper;
 
     @GetMapping("/list")
     @Operation(summary = "获取消息通知列表")
-    public Result<List<Map<String, Object>>> list(@RequestParam Long elderId) {
+    public Result<List<Map<String, Object>>> list(@RequestParam Long elderId, HttpServletRequest request) {
+        Long familyId = request.getAttribute("userId") instanceof Number n ? n.longValue() : null;
+        Long bound = familyBindMapper.selectCount(new LambdaQueryWrapper<FamilyBind>()
+                .eq(FamilyBind::getFamilyId, familyId)
+                .eq(FamilyBind::getElderId, elderId));
+        if (bound == null || bound == 0) {
+            return Result.error("您未绑定该老人或无权查看消息");
+        }
+
         List<NoticeItem> allNotices = new ArrayList<>();
         User elder = userMapper.selectById(elderId);
         String elderName = elder != null ? elder.getRealName() : "该老人";

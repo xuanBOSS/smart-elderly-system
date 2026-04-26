@@ -2,9 +2,12 @@ package com.community.smartelderlybackend.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.community.smartelderlybackend.common.Result;
+import com.community.smartelderlybackend.dto.ElderlyAppointmentRequest;
 import com.community.smartelderlybackend.entity.FamilyBind;
+import com.community.smartelderlybackend.entity.EmergencyRecord;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
+import com.community.smartelderlybackend.mapper.EmergencyRecordMapper;
 import com.community.smartelderlybackend.mapper.FamilyBindMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
 import com.community.smartelderlybackend.mapper.UserMapper;
@@ -14,6 +17,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -29,6 +33,10 @@ public class FamilyController {
     private UserMapper userMapper;
     @Autowired
     private HealthRecordsMapper healthRecordsMapper;
+    @Autowired
+    private EmergencyRecordMapper emergencyRecordMapper;
+    @Autowired
+    private com.community.smartelderlybackend.service.ElderlyAppointmentService elderlyAppointmentService;
 
     @GetMapping("/elders")
     @Operation(summary = "获取当前家属绑定的老人列表")
@@ -57,7 +65,10 @@ public class FamilyController {
 
     @GetMapping("/dashboard")
     @Operation(summary = "获取老人的健康图表大盘")
-    public Result<Map<String, Object>> getDashboard(@RequestParam Long elderId) {
+    public Result<Map<String, Object>> getDashboard(@RequestParam Long elderId, HttpServletRequest request) {
+        if (!isFamilyBoundToElder(request, elderId)) {
+            return Result.error("您未绑定该老人或无权查看");
+        }
         // 1. 查最近 7 条健康记录
         LambdaQueryWrapper<HealthRecords> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(HealthRecords::getUserId, elderId)
@@ -75,7 +86,7 @@ public class FamilyController {
 
         // 3. 组装图表 Trend 数据 (Java 8 Stream )
         Map<String, Object> trend = new HashMap<>();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd");
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd HH:mm");
         trend.put("dates", records.stream().map(r -> r.getRecordTime().format(formatter)).collect(Collectors.toList()));
         trend.put("systolic", records.stream().map(HealthRecords::getBloodPressureHigh).collect(Collectors.toList()));
         trend.put("diastolic", records.stream().map(HealthRecords::getBloodPressureLow).collect(Collectors.toList()));
@@ -85,7 +96,7 @@ public class FamilyController {
         HealthRecords latestRecord = records.get(records.size() - 1);
         Map<String, Object> latest = new HashMap<>();
         latest.put("bloodPressure", latestRecord.getBloodPressureHigh() + "/" + latestRecord.getBloodPressureLow());
-        latest.put("heartRate", latestRecord.getHeartRate().toString());
+        latest.put("heartRate", latestRecord.getHeartRate() != null ? latestRecord.getHeartRate().toString() : "--");
         latest.put("bloodSugar", latestRecord.getBloodSugar() != null ? latestRecord.getBloodSugar().toString() : "--");
 
         finalData.put("trend", trend);
@@ -126,6 +137,99 @@ public class FamilyController {
         familyBindMapper.insert(bind);
 
         return Result.success("绑定成功");
+    }
+
+    @GetMapping("/doctors-for-booking")
+    @Operation(summary = "家属为绑定老人预约时可选的医生列表")
+    public Result<List<User>> doctorsForBooking(@RequestParam Long elderId, HttpServletRequest request) {
+        if (!isFamilyBoundToElder(request, elderId)) {
+            return Result.error("您未绑定该老人或无权操作");
+        }
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(User::getRole, 2);
+        return Result.success(userMapper.selectList(wrapper));
+    }
+
+    @GetMapping("/doctorSchedules")
+    @Operation(summary = "家属端：某医生从今日起的排班（用于选日期）")
+    public Result<List<Map<String, Object>>> familyDoctorSchedules(
+            @RequestParam Long elderId,
+            @RequestParam Long doctorId,
+            HttpServletRequest request) {
+        if (!isFamilyBoundToElder(request, elderId)) {
+            return Result.error("您未绑定该老人或无权操作");
+        }
+        User doctor = userMapper.selectById(doctorId);
+        if (doctor == null || doctor.getRole() == null || doctor.getRole() != 2) {
+            return Result.error("医生不存在");
+        }
+        return Result.success(elderlyAppointmentService.listSchedulesForDoctor(doctorId, LocalDate.now()));
+    }
+
+    @PostMapping("/appointment")
+    @Operation(summary = "家属代为提交老人预约挂号")
+    public Result<Map<String, Object>> bookAppointmentForElder(
+            @RequestBody ElderlyAppointmentRequest request,
+            HttpServletRequest httpRequest) {
+        if (request == null || request.getUserId() == null) {
+            return Result.error("userId（老人ID）不能为空");
+        }
+        if (!isFamilyBoundToElder(httpRequest, request.getUserId())) {
+            return Result.error("您未绑定该老人或无权代为预约");
+        }
+        return elderlyAppointmentService.createPendingAppointment(request);
+    }
+
+    @PostMapping("/emergency/resolve")
+    @Operation(summary = "家属处理完成后回传工单已解决")
+    public Result<String> resolveEmergencyByFamily(
+            @RequestParam Long helpId,
+            HttpServletRequest request) {
+        if (helpId == null) {
+            return Result.error("helpId 不能为空");
+        }
+        Long familyId = Long.valueOf(request.getAttribute("userId").toString());
+        EmergencyRecord record = emergencyRecordMapper.selectById(helpId);
+        if (record == null) {
+            return Result.error("工单不存在");
+        }
+        if (record.getUserId() == null) {
+            return Result.error("工单缺少老人信息");
+        }
+        Long bindCount = familyBindMapper.selectCount(new LambdaQueryWrapper<FamilyBind>()
+                .eq(FamilyBind::getFamilyId, familyId)
+                .eq(FamilyBind::getElderId, record.getUserId()));
+        if (bindCount == null || bindCount <= 0) {
+            return Result.error("您无权处理该老人的工单");
+        }
+        Integer st = record.getStatus();
+        if (st != null && st == 3) {
+            return Result.success("工单已是已解决状态");
+        }
+        // 仅允许家属处理中(status=1)或待处理(status=0)直接完结
+        if (st != null && st != 0 && st != 1) {
+            return Result.error("当前状态不可由家属直接完结");
+        }
+        String old = record.getHandleResult() == null ? "" : record.getHandleResult().trim();
+        String tag = "(家属已解决)";
+        if (!old.contains(tag)) {
+            old = old.isEmpty() ? tag : (old + " " + tag);
+        }
+        record.setStatus(3);
+        record.setHandleResult(old);
+        emergencyRecordMapper.updateById(record);
+        return Result.success("已回传社区：家属处理完成");
+    }
+
+    private boolean isFamilyBoundToElder(HttpServletRequest request, Long elderId) {
+        if (elderId == null) {
+            return false;
+        }
+        Long familyId = Long.valueOf(request.getAttribute("userId").toString());
+        Long count = familyBindMapper.selectCount(new LambdaQueryWrapper<FamilyBind>()
+                .eq(FamilyBind::getFamilyId, familyId)
+                .eq(FamilyBind::getElderId, elderId));
+        return count != null && count > 0;
     }
 
     private Map<String, Object> buildEmptyDashboard() {

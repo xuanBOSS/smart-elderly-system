@@ -4,7 +4,7 @@ import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.dto.LoginRequest;
 import com.community.smartelderlybackend.entity.User;
 import com.community.smartelderlybackend.service.UserService;
-import com.community.smartelderlybackend.utils.JwtUtils; // 🌟 新增：导入刚刚写的 JWT 制造机
+import com.community.smartelderlybackend.utils.JwtUtils; 
 import com.community.smartelderlybackend.vo.LoginResponse;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,7 +22,6 @@ public class UserController {
     @Autowired
     private UserService userService;
 
-    // --- 这是你原来写好的接口，原封不动保留，给 C 同学留着 ---
     @GetMapping("/{id}")
     @Operation(summary = "根据ID查询老人信息", description = "传入老人的专属ID，返回详细的档案数据")
     public Result<User> getUserById(

@@ -1,14 +1,8 @@
-# ArchivesView.vue - 医生界面，查看患者健康档案的组件
-
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import request from '@/utils/request'
-
-const router = useRouter()
-const goBack = () => router.push('/doctor')
 
 const archives = ref([])
 const loading = ref(false)
@@ -111,7 +105,6 @@ onMounted(() => {
         <h1>患者健康档案库</h1>
         <p>管理已确认预约患者的基本信息与健康状态</p>
       </div>
-      <el-button type="primary" @click="goBack">返回预约大厅</el-button>
     </div>
 
     <el-card class="archives-card" shadow="never">
@@ -175,10 +168,6 @@ onMounted(() => {
 }
 
 .page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
   margin-bottom: 20px;
 }
 

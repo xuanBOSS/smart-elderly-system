@@ -5,11 +5,13 @@ import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.dto.ElderlyAppointmentRequest;
 import com.community.smartelderlybackend.dto.EmergencyRequest;
 import com.community.smartelderlybackend.entity.Appointment;
+import com.community.smartelderlybackend.entity.BuildingGeoZone;
 import com.community.smartelderlybackend.entity.DoctorSchedule;
 import com.community.smartelderlybackend.entity.EmergencyRecord;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
 import com.community.smartelderlybackend.mapper.AppointmentMapper;
+import com.community.smartelderlybackend.mapper.BuildingGeoZoneMapper;
 import com.community.smartelderlybackend.mapper.DoctorScheduleMapper;
 import com.community.smartelderlybackend.mapper.EmergencyRecordMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
@@ -31,6 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/elderly")
@@ -48,7 +51,11 @@ public class ElderlyController {
     @Autowired
     private UserMapper userMapper;
     @Autowired
+    private BuildingGeoZoneMapper buildingGeoZoneMapper;
+    @Autowired
     private com.community.smartelderlybackend.service.AiService aiService;
+    @Autowired
+    private com.community.smartelderlybackend.service.ElderlyAppointmentService elderlyAppointmentService;
 
     @PostMapping("/emergency")
     @Operation(summary = "一键报警接口")
@@ -71,8 +78,7 @@ public class ElderlyController {
             Double longitude = request.getLongitude();
 
             if (latitude != null && longitude != null) {
-                // 位置先只显示经纬度，不做反向地理编码，避免外部服务失败导致“未登记家庭住址”
-                location = buildCoordinateText(latitude, longitude);
+                location = buildEmergencyLocationText(latitude, longitude);
             }
 
             // 如果仍然为空，再退回“最近一次登记的位置”
@@ -108,6 +114,37 @@ public class ElderlyController {
         return String.format("定位坐标(%.6f, %.6f)", latitude, longitude);
     }
 
+    /**
+     * 基于坐标范围映射楼栋号，拼接可用于社区态势图高亮的位置信息文本。
+     */
+    private String buildEmergencyLocationText(Double latitude, Double longitude) {
+        String coord = buildCoordinateText(latitude, longitude);
+        Integer buildingNo = resolveBuildingNo(latitude, longitude).orElse(null);
+        if (buildingNo == null) {
+            return coord;
+        }
+        return "小区" + buildingNo + "号楼 " + coord;
+    }
+
+    private Optional<Integer> resolveBuildingNo(Double latitude, Double longitude) {
+        if (latitude == null || longitude == null) return Optional.empty();
+        List<BuildingGeoZone> zones = buildingGeoZoneMapper.selectList(new LambdaQueryWrapper<BuildingGeoZone>()
+                .eq(BuildingGeoZone::getActive, 1));
+        for (BuildingGeoZone z : zones) {
+            if (z.getBuildingNo() == null
+                    || z.getMinLatitude() == null || z.getMaxLatitude() == null
+                    || z.getMinLongitude() == null || z.getMaxLongitude() == null) {
+                continue;
+            }
+            boolean inLat = latitude >= z.getMinLatitude() && latitude <= z.getMaxLatitude();
+            boolean inLng = longitude >= z.getMinLongitude() && longitude <= z.getMaxLongitude();
+            if (inLat && inLng) {
+                return Optional.of(z.getBuildingNo());
+            }
+        }
+        return Optional.empty();
+    }
+
     @GetMapping("/doctors")
     @Operation(summary = "获取所有医生列表（role=2）")
     public Result<List<User>> getDoctors(@RequestParam Long userId) {
@@ -129,6 +166,25 @@ public class ElderlyController {
         return Result.success(doctors);
     }
 
+    @GetMapping("/doctorSchedules")
+    @Operation(summary = "某医生从今日起的可预约排班列表（含剩余号源）")
+    public Result<List<Map<String, Object>>> getDoctorSchedules(
+            @RequestParam Long userId,
+            @RequestParam Long doctorId) {
+        User elder = userMapper.selectById(userId);
+        if (elder == null) {
+            return Result.error("老人不存在");
+        }
+        if (!isElderlyUser(elder)) {
+            return Result.error("该用户不是老人");
+        }
+        User doctor = userMapper.selectById(doctorId);
+        if (doctor == null || doctor.getRole() == null || doctor.getRole() != 2) {
+            return Result.error("医生不存在");
+        }
+        return Result.success(elderlyAppointmentService.listSchedulesForDoctor(doctorId, LocalDate.now()));
+    }
+
     @PostMapping("/appointment")
     @Operation(summary = "挂号预约接口")
     public Result<Map<String, Object>> handleAppointment(@RequestBody(required = false) ElderlyAppointmentRequest request) {
@@ -138,78 +194,15 @@ public class ElderlyController {
         if (request == null || request.getDoctorId() == null) {
             return Result.success(data);
         }
-        if (request.getUserId() == null) {
-            return Result.error("userId 不能为空");
+        Result<Map<String, Object>> bookResult = elderlyAppointmentService.createPendingAppointment(request);
+        if (bookResult.getCode() == null || bookResult.getCode() != 200) {
+            return bookResult;
         }
-
-        User elder = userMapper.selectById(request.getUserId());
-        if (elder == null) {
-            return Result.error("老人不存在");
+        Map<String, Object> merged = new HashMap<>(data);
+        if (bookResult.getData() != null) {
+            merged.putAll(bookResult.getData());
         }
-        if (!isElderlyUser(elder)) {
-            return Result.error("该用户不是老人");
-        }
-
-        DoctorSchedule schedule = request.getScheduleId() != null
-                ? doctorScheduleMapper.selectById(request.getScheduleId())
-                : doctorScheduleMapper.selectOne(new LambdaQueryWrapper<DoctorSchedule>()
-                .eq(DoctorSchedule::getDoctorId, request.getDoctorId())
-                .eq(DoctorSchedule::getWorkDate, LocalDate.now())
-                .orderByAsc(DoctorSchedule::getTimeSlot)
-                .last("LIMIT 1"));
-
-        if (schedule == null) {
-            // 容错：如果当天没有排班，找从今天起最近的一条排班
-            schedule = doctorScheduleMapper.selectOne(new LambdaQueryWrapper<DoctorSchedule>()
-                    .eq(DoctorSchedule::getDoctorId, request.getDoctorId())
-                    .ge(DoctorSchedule::getWorkDate, LocalDate.now())
-                    .orderByAsc(DoctorSchedule::getWorkDate)
-                    .orderByAsc(DoctorSchedule::getTimeSlot)
-                    .last("LIMIT 1"));
-            if (schedule == null) {
-                return Result.error("未找到可用排班");
-            }
-        }
-
-        int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
-        int maxCapacity = schedule.getMaxCapacity() == null ? 0 : schedule.getMaxCapacity();
-        // 待确认预约(status=0)也占用号源，因此需要与已约(bookedCount)一起计算剩余名额
-        int timeSlot = schedule.getTimeSlot() == null ? 0 : schedule.getTimeSlot(); // 0上午, 1下午
-        LocalDate workDate = schedule.getWorkDate();
-        LocalDateTime start = workDate.atStartOfDay();
-        LocalDateTime end = workDate.atTime(LocalTime.MAX);
-
-        List<Appointment> pendingAppts = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
-                .eq(Appointment::getDoctorId, schedule.getDoctorId())
-                .eq(Appointment::getStatus, 0)
-                .between(Appointment::getAppointTime, start, end));
-
-        long pendingCount = pendingAppts.stream()
-                .filter(a -> a.getAppointTime() != null)
-                .filter(a -> {
-                    int hour = a.getAppointTime().getHour();
-                    int apptSlot = hour < 12 ? 0 : 1;
-                    return apptSlot == timeSlot;
-                })
-                .count();
-
-        int reservedCount = bookedCount + (int) pendingCount;
-        if (maxCapacity > 0 && reservedCount >= maxCapacity) {
-            return Result.error("该排班号源已满");
-        }
-
-        Appointment appointment = new Appointment();
-        appointment.setUserId(request.getUserId());
-        appointment.setDoctorId(schedule.getDoctorId());
-        appointment.setStatus(0);
-        appointment.setAppointTime(resolveAppointTime(schedule, request.getAppointTime()));
-        appointmentMapper.insert(appointment);
-
-        Map<String, Object> result = new HashMap<>(data);
-        result.put("appointId", appointment.getAppointId());
-        result.put("status", appointment.getStatus());
-        result.put("appointTime", appointment.getAppointTime());
-        return Result.success(result);
+        return Result.success(merged);
     }
 
     @GetMapping("/appointments")
@@ -358,7 +351,7 @@ public class ElderlyController {
             return Result.error("没听清您说的话");
         }
 
-        // 1. 组装给 DeepSeek 的“魔法提示词” (让它扮演数据提取器)
+        // 1. 组装给 DeepSeek 
         String prompt = String.format(
                 "你是一个智慧养老系统的意图解析引擎。老人家说了一句话：【%s】。\n" +
                         "请你分析这句话的意图，并严格按以下规则返回 JSON 数据（绝不要输出任何解释性文字或Markdown标记，只输出纯JSON）：\n" +
@@ -369,7 +362,7 @@ public class ElderlyController {
                 text
         );
 
-        // 2. 呼叫 DeepSeek 大脑！
+        // 2. 呼叫 DeepSeek
         String aiResponse = aiService.getRiskPrediction(prompt); // 复用昨天的通信方法
         System.out.println("🤖 AI 解析结果: " + aiResponse);
 
@@ -377,7 +370,7 @@ public class ElderlyController {
             // 清理可能带有的 markdown 标记 (比如 ```json ... ```)
             aiResponse = aiResponse.replace("```json", "").replace("```", "").trim();
 
-            // 3. 解析 AI 返回的 JSON，并自动执行 CRUD 数据库操作！
+            // 3. 解析 AI 返回的 JSON，并自动执行 CRUD 数据库操作
             cn.hutool.json.JSONObject resultObj = cn.hutool.json.JSONUtil.parseObj(aiResponse);
             String action = resultObj.getStr("action");
             cn.hutool.json.JSONObject dataObj = resultObj.getJSONObject("data");
@@ -423,7 +416,7 @@ public class ElderlyController {
                 appt.setAppointTime(LocalDateTime.now().plusDays(1).withHour(9).withMinute(0)); // 默认帮老人约明天上午9点
                 appointmentMapper.insert(appt);
 
-                // 返回的这句话里必须带“预约”两个字，这样前端听到后才会自动刷新列表！
+                // 返回的这句话里必须带“预约”两个字，这样前端听到后才会自动刷新列表
                 return Result.success("已为您成功预约" + doctor.getRealName() + "医生！");
 
             } else if ("sos".equals(action)) {
@@ -488,16 +481,6 @@ public class ElderlyController {
             map.put("remainCount", Math.max(maxCapacity - reservedCount, 0));
             return map;
         }).toList();
-    }
-
-    private LocalDateTime resolveAppointTime(DoctorSchedule schedule, LocalDateTime appointTime) {
-        if (appointTime != null) {
-            return appointTime;
-        }
-        LocalTime time = schedule.getTimeSlot() != null && schedule.getTimeSlot() == 1
-                ? LocalTime.of(14, 30)
-                : LocalTime.of(9, 0);
-        return LocalDateTime.of(schedule.getWorkDate(), time);
     }
 
     private boolean isElderlyUser(User user) {

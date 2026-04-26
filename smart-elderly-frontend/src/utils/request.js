@@ -42,13 +42,17 @@ request.interceptors.response.use(
   },
   error => {
     // 如果后端保安拦截了，返回了 401（未登录或 Token 失效）
-    if (error.response && error.response.status === 401) {
+    const status = error.response?.status
+    if (status === 401) {
       ElMessage.error('登录已过期，请重新登录')
       const tokenKey = getTokenKeyByPath()
       // 清理当前页面对应的 token，避免误踢其他角色
       localStorage.removeItem(tokenKey)
       localStorage.removeItem('token') // 兼容旧逻辑
       router.push('/login') // 自动踢回登录页
+    } else if (status === 403) {
+      const msg = error.response?.data?.message || '无权限访问该资源'
+      ElMessage.error(msg)
     } else {
       ElMessage.error(error.message || '系统异常')
     }

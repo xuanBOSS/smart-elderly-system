@@ -9,7 +9,17 @@ const router = useRouter()
 const activeTab = ref('home')
 const userInfo = ref(null)
 const health = ref(null)
-const checkinStatus = ref('未完成')
+/** 四项体征齐全视为当日打卡完成（与「健康」页一致，避免状态矛盾） */
+const checkinStatus = computed(() => {
+  if (!health.value) return '未完成'
+  const h = health.value
+  const ok =
+    h.bloodPressureHigh != null &&
+    h.bloodPressureLow != null &&
+    h.heartRate != null &&
+    h.bloodSugar != null
+  return ok ? '已完成' : '未完成'
+})
 const doctors = ref([])
 const loadingDoctors = ref(false)
 const keyword = ref('')
@@ -27,6 +37,12 @@ const showVoicePanel = ref(false)
 const voiceText = ref('')
 const doctorsLoaded = ref(false)
 
+const showBookDialog = ref(false)
+const bookDoctor = ref(null)
+const scheduleRows = ref([])
+const pickedScheduleId = ref(null)
+const loadingSchedules = ref(false)
+
 const weekMap = ['日', '一', '二', '三', '四', '五', '六']
 const now = new Date()
 const currentDate = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekMap[now.getDay()]}`
@@ -35,13 +51,33 @@ const displayName = computed(() => {
   return userInfo.value?.realName || '长者'
 })
 
+/** 血压偏高：收缩压>140 或 舒张压≥90 */
+const isBpHigh = (high, low) => {
+  const h = Number(high)
+  const l = Number(low)
+  const highUp = !Number.isNaN(h) && h > 140
+  const lowUp = !Number.isNaN(l) && l >= 90
+  return highUp || lowUp
+}
+/** 血压偏低：收缩压<90 或 舒张压<60 */
+const isBpLow = (high, low) => {
+  const h = Number(high)
+  const l = Number(low)
+  const highLow = !Number.isNaN(h) && h < 90
+  const lowLow = !Number.isNaN(l) && l < 60
+  return highLow || lowLow
+}
+
 const vitalStatus = computed(() => {
   if (!health.value) return '暂无数据'
-  const high = Number(health.value.bloodPressureHigh)
-  const low = Number(health.value.bloodPressureLow)
+  const high = health.value.bloodPressureHigh
+  const low = health.value.bloodPressureLow
   const heartRate = Number(health.value.heartRate)
   const sugar = Number(health.value.bloodSugar)
-  const stable = high <= 140 && low <= 90 && heartRate >= 55 && heartRate <= 100 && sugar <= 7.0
+  const bpBad = isBpHigh(high, low) || isBpLow(high, low)
+  const hrBad = !Number.isNaN(heartRate) && (heartRate < 55 || heartRate > 100)
+  const sugarBad = !Number.isNaN(sugar) && sugar > 7.0
+  const stable = !bpBad && !hrBad && !sugarBad
   return stable ? '稳定' : '需关注'
 })
 
@@ -54,9 +90,11 @@ const bloodPressureText = computed(() => {
 
 const bloodPressureLevel = computed(() => {
   if (!health.value) return '暂无数据'
-  const high = Number(health.value.bloodPressureHigh)
-  const low = Number(health.value.bloodPressureLow)
-  return high <= 140 && low <= 90 ? '正常' : '需关注'
+  const high = health.value.bloodPressureHigh
+  const low = health.value.bloodPressureLow
+  if (isBpLow(high, low)) return '偏低·需关注'
+  if (isBpHigh(high, low)) return '偏高·需关注'
+  return '正常'
 })
 
 const heartRateLevel = computed(() => {
@@ -103,7 +141,12 @@ const doctorTodayAvailableIds = computed(() => {
   )
 })
 
-const goLogin = () => router.push('/login')
+const goLogin = () => {
+  localStorage.removeItem('token_0')
+  localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
+  router.push('/login')
+}
 
 const toggleHugeFontMode = () => {
   hugeFontMode.value = !hugeFontMode.value
@@ -259,39 +302,22 @@ const sendEmergencyReal = async () => {
     const helpId = data.data?.helpId // 拿到后端刚刚生成的那条救命工单的 ID
     ElMessage.success('SOS 信号已发出！社区大屏已亮起红灯！')
 
-    speak("救援已呼叫。能听到吗？请告诉我您遇到了什么情况？", () => {
-      // 只有等系统这句话彻底读完闭嘴了，才打开麦克风！
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (!SpeechRecognition) return
-
-      const recognition = new SpeechRecognition()
-      recognition.lang = 'zh-CN'
-      recognition.continuous = false
-      recognition.interimResults = false
-
-      recognition.onstart = () => {
-        ElMessage({ message: '🎙️ 正在倾听您的情况...', type: 'warning', duration: 8000 })
-      }
-
-      recognition.onresult = async (event) => {
-        const transcript = event.results[0][0].transcript
-        console.log("老人补充的求救情况：", transcript)
-        
-        // 🌟 动作 3：把老人补充的伤情，更新到那条报警记录里！
-        await request.post('/api/elderly/emergency/updateDesc', {
-          helpId: helpId,
-          desc: transcript
-        })
-        speak("收到，已经把您的具体情况同步给社区救援人员。")
-      }
-
-      recognition.onerror = () => {
-        // 如果老人疼得说不出话，或者周围太吵没识别出来
-        // 不做任何报错，因为救命的第一步早就发出了！
-        speak("请您保持体力，救援人员马上就到。")
-      }
-
-      recognition.start()
+    speak('救援已呼叫。请慢慢说明现场情况，可以分多句说，说完请点击下方「说完了」。', () => {
+      startContinuousRecognition({
+        tip: '🎙️ 请补充求救说明，说完点「说完了」',
+        onFinal: async (transcript) => {
+          console.log('老人补充的求救情况：', transcript)
+          try {
+            await request.post('/api/elderly/emergency/updateDesc', {
+              helpId,
+              desc: transcript
+            })
+            speak('收到，已经把您的具体情况同步给社区救援人员。')
+          } catch {
+            speak('请您保持体力，救援人员马上就到。')
+          }
+        }
+      })
     })
 
   } catch (error) {
@@ -322,7 +348,6 @@ const loadHealth = async () => {
     const { data } = await request.get('/api/elderly/health', { params: { userId } })
     if (data.code !== 200) {
       health.value = null
-      checkinStatus.value = '未完成'
       ElMessage.error(data.message || '健康档案加载失败')
       return
     }
@@ -332,10 +357,8 @@ const loadHealth = async () => {
       heartRate: data.data?.heartRate,
       bloodSugar: data.data?.bloodSugar
     }
-    checkinStatus.value = health.value?.heartRate && health.value?.bloodPressureHigh ? '已完成' : '未完成'
   } catch (error) {
     health.value = null
-    checkinStatus.value = '未完成'
     ElMessage.error(withFriendlyError(error, '健康档案加载失败'))
   }
 }
@@ -373,48 +396,77 @@ const loadDoctors = async () => {
   }
 }
 
-const bookNow = async (doctor) => {
+const openBookDialog = async (doctor) => {
   if (activeAppointmentDoctorIds.value.has(String(doctor.userId))) {
     ElMessage.warning('该医生已有进行中的预约，请勿重复提交')
     return
   }
-
-  if (!doctorTodayAvailableIds.value.has(String(doctor.userId))) {
-    ElMessage.warning('该医生今日号源不足，暂时无法预约')
-    return
-  }
-
   const userId = getCurrentUserId()
   if (!userId) {
     ElMessage.warning('请先登录后再预约')
     return
   }
-
+  bookDoctor.value = doctor
+  pickedScheduleId.value = null
+  scheduleRows.value = []
+  showBookDialog.value = true
+  loadingSchedules.value = true
   try {
-    const { data } = await request.post('/api/elderly/appointment', { userId, doctorId: doctor.userId })
+    const { data } = await request.get('/api/elderly/doctorSchedules', {
+      params: { userId, doctorId: doctor.userId }
+    })
+    if (data.code === 200 && Array.isArray(data.data)) {
+      scheduleRows.value = data.data.filter((row) => Number(row.remainCount) > 0)
+      if (scheduleRows.value.length === 0) {
+        ElMessage.warning('该医生暂无可预约号源')
+      }
+    } else {
+      ElMessage.error(data?.message || '加载排班失败')
+    }
+  } catch (error) {
+    ElMessage.error(withFriendlyError(error, '加载排班失败'))
+  } finally {
+    loadingSchedules.value = false
+  }
+}
+
+const confirmBookFromDialog = async () => {
+  if (!pickedScheduleId.value) {
+    ElMessage.warning('请选择就诊日期与时段')
+    return
+  }
+  const userId = getCurrentUserId()
+  if (!userId || !bookDoctor.value) {
+    ElMessage.warning('请先登录后再预约')
+    return
+  }
+  try {
+    const { data } = await request.post('/api/elderly/appointment', {
+      userId,
+      doctorId: bookDoctor.value.userId,
+      scheduleId: pickedScheduleId.value
+    })
     if (data.code !== 200) {
       ElMessage.error(data.message || '预约失败，请稍后重试')
       return
     }
-
-    const appointId = data.data?.appointId
-    const appointTime = data.data?.appointTime
-
-    appointmentRecords.value.unshift({
-      id: String(appointId),
-      appointId,
-      userId,
-      doctorId: doctor.userId,
-      doctorName: doctor.realName,
-      status: '待确认',
-      createTime: formatAppointTime(appointTime)
-    })
-    saveAppointmentRecords()
-    // 以服务器数据为准，避免 localStorage 与后端状态不一致
-    loadAppointmentRecords()
-    ElMessage.success(`已提交给 ${doctor.realName} 的预约申请`)
+    showBookDialog.value = false
+    await loadAppointmentRecords()
+    await loadDoctorsRefreshSchedules()
+    ElMessage.success(`已提交给 ${bookDoctor.value.realName} 的预约申请`)
   } catch (error) {
     ElMessage.error(withFriendlyError(error, '预约失败，请稍后重试'))
+  }
+}
+
+const loadDoctorsRefreshSchedules = async () => {
+  try {
+    const { data: scheduleRes } = await request.post('/api/elderly/appointment', {})
+    if (scheduleRes?.code === 200) {
+      todaySchedules.value = scheduleRes.data?.schedules || []
+    }
+  } catch {
+    /* ignore */
   }
 }
 
@@ -456,26 +508,44 @@ const cancelAppointment = async (item) => {
 }
 
 // ================= 🌟 1. 语音播报 (TTS - 系统的嘴巴) =================
+const pickZhVoice = () => {
+  if (!('speechSynthesis' in window)) return null
+  const vs = window.speechSynthesis.getVoices()
+  const zh = vs.filter((v) => (v.lang || '').toLowerCase().includes('zh'))
+  const pick = (kw) => zh.find((v) => (v.name || '').includes(kw))
+  return (
+    pick('Xiaoxiao') ||
+    pick('Yaoyao') ||
+    pick('Yunxi') ||
+    pick('Huihui') ||
+    pick('Microsoft') ||
+    zh[0] ||
+    null
+  )
+}
+
 const speak = (text, onEndCallback = null) => {
   if (!('speechSynthesis' in window)) {
     ElMessage.error('当前浏览器不支持语音播报')
     if (onEndCallback) onEndCallback()
     return
   }
-  window.speechSynthesis.cancel() // 停止正在播放的语音
-  
+  window.speechSynthesis.cancel()
+
   const msg = new SpeechSynthesisUtterance(text)
   msg.lang = 'zh-CN'
-  msg.rate = 0.85
-  msg.pitch = 1
-  
-  // 🌟 核心魔法：当系统彻底读完这句话时，触发回调！
+  const voice = pickZhVoice()
+  if (voice) msg.voice = voice
+  msg.rate = 0.76
+  msg.pitch = 0.96
+  msg.volume = 1
+
   if (onEndCallback) {
     msg.onend = () => {
       onEndCallback()
     }
   }
-  
+
   window.speechSynthesis.speak(msg)
 }
 
@@ -485,8 +555,88 @@ const startVoiceBroadcast = () => {
   speak(voiceBroadcastText.value) // 直接读出你写的完美文案！
 }
 
-// ================= 🌟 2. 语音录入 (ASR - 系统的耳朵) =================
+// ================= 🌟 2. 语音录入 (ASR - 系统的耳朵，支持持续收音) =================
 const isListening = ref(false)
+let asrRecognition = null
+const showAsrBar = ref(false)
+const asrLiveText = ref('')
+let asrAgg = ''
+
+const finishContinuousAsr = () => {
+  try {
+    asrRecognition?.stop()
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * continuous + 手动「说完了」结束，便于老人分段说长句。
+ */
+const startContinuousRecognition = ({ onFinal, tip }) => {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!SpeechRecognition) {
+    ElMessageBox.alert('抱歉，您的浏览器不支持语音识别，请使用 Chrome 或 Edge 浏览器。', '提示')
+    return
+  }
+  if (asrRecognition) finishContinuousAsr()
+
+  asrAgg = ''
+  asrLiveText.value = ''
+  const recognition = new SpeechRecognition()
+  asrRecognition = recognition
+  recognition.lang = 'zh-CN'
+  recognition.continuous = true
+  recognition.interimResults = true
+
+  recognition.onresult = (event) => {
+    let interim = ''
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const res = event.results[i]
+      const piece = res[0]?.transcript || ''
+      if (res.isFinal) asrAgg += piece
+      else interim += piece
+    }
+    asrLiveText.value = (asrAgg + interim).trim()
+  }
+
+  recognition.onerror = (ev) => {
+    const code = ev?.error
+    if (code === 'aborted') return
+    isListening.value = false
+    showAsrBar.value = false
+    asrRecognition = null
+    if (code === 'not-allowed') {
+      speak('请先允许浏览器使用麦克风，再重试语音录入。')
+    }
+  }
+
+  recognition.onend = async () => {
+    asrRecognition = null
+    isListening.value = false
+    showAsrBar.value = false
+    const t = asrAgg.trim()
+    asrAgg = ''
+    asrLiveText.value = ''
+    if (t) await onFinal(t)
+  }
+
+  isListening.value = true
+  showAsrBar.value = true
+  ElMessage({
+    message: tip || '正在持续聆听：可分段说多句，说完请点击「说完了」',
+    type: 'warning',
+    duration: 8000
+  })
+  try {
+    recognition.start()
+  } catch (e) {
+    console.error('麦克风启动异常', e)
+    isListening.value = false
+    showAsrBar.value = false
+    asrRecognition = null
+  }
+}
 
 const processVoiceData = async (text) => {
   const userId = getCurrentUserId()
@@ -532,73 +682,39 @@ const openVoiceBooking = () => {
     return
   }
 
-  const recognition = new SpeechRecognition()
-  recognition.lang = 'zh-CN'
-  recognition.continuous = false
-  recognition.interimResults = false
-
-  // 1. 刚点按钮，状态变更为准备中
-  isListening.value = true
-  
-  // 2. 🌟 让系统先说话，并传入一个回调函数（说话结束后才执行）
-  speak("我在听，请告诉我您的身体状况，血压多少，血糖多少，心率如何，或者您想预约哪天看病？", () => {
-    
-    // 3. 🌟 系统的嘴巴闭上了，现在立刻弹出提示，并正式打开麦克风！
-    ElMessage({
-      message: '🎙️ 现在请说话...',
-      type: 'warning',
-      duration: 5000
-    })
-    
-    try {
-      recognition.start() // 正式启动麦克风
-    } catch (e) {
-      console.error("麦克风启动异常", e)
-      isListening.value = false
+  speak(
+    '我在听。您可以连续说出血压、心率、血糖或预约需求，可以分多句说完，最后请点击「说完了」。',
+    () => {
+      startContinuousRecognition({
+        tip: '🎙️ 持续聆听中：说完请点击「说完了」',
+        onFinal: async (transcript) => {
+          console.log('老人说的话：', transcript)
+          await processVoiceData(transcript)
+        }
+      })
     }
-  })
-
-  // 麦克风开始录音时的事件
-  recognition.onstart = () => {
-    console.log("麦克风已真实开启")
-  }
-
-  // 监听到老人的话
-  recognition.onresult = async (event) => {
-    const transcript = event.results[0][0].transcript
-    console.log("老人说的话：", transcript)
-    
-    ElMessageBox.confirm(`系统听到您说：<br/><b style="color:#409EFF;font-size:18px">“${transcript}”</b><br/><br/>正在为您智能处理...`, '语音识别成功', {
-      dangerouslyUseHTMLString: true,
-      showCancelButton: false,
-      confirmButtonText: '好的'
-    })
-    
-    // 发给后端 DeepSeek 处理
-    await processVoiceData(transcript)
-  }
-
-  recognition.onerror = (event) => {
-    console.error('语音识别错误', event.error)
-    speak("抱歉，我没有听清，请您稍微大点声再说一遍。")
-    isListening.value = false
-  }
-
-  recognition.onend = () => {
-    isListening.value = false
-  }
+  )
 }
 
-const submitVoiceBooking = () => {
-  if (!voiceText.value.trim()) {
+const submitVoiceBooking = async () => {
+  const t = voiceText.value.trim()
+  if (!t) {
     ElMessage.warning('请先输入或录入内容')
     return
   }
-  ElMessage.success('语音内容已提交（手动录入）')
   showVoicePanel.value = false
+  await processVoiceData(t)
+}
+
+const goHealthTab = () => {
+  activeTab.value = 'health'
 }
 
 onMounted(async () => {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    pickZhVoice()
+    window.speechSynthesis.onvoiceschanged = () => pickZhVoice()
+  }
   try {
     await Promise.all([loadUserInfo(), loadHealth()])
     await loadAppointmentRecords()
@@ -655,6 +771,17 @@ watch(showRecordDrawer, (open) => {
           <div class="status-card">
             <span class="status-dot">♡</span>
             <span class="status-text">生命体征：{{ vitalStatus }}</span>
+          </div>
+
+          <div v-if="!health" class="home-hint-card">
+            <p class="home-hint-title">暂无体征数据</p>
+            <p class="home-hint-sub">请打开底部「健康」查看详情，或使用本页「语音录入」说出血压、心率、血糖；家属也可在社区端协助录入。</p>
+            <button type="button" class="home-hint-btn" @click="goHealthTab">打开健康数据</button>
+          </div>
+          <div v-else-if="checkinStatus === '未完成'" class="home-hint-card mild">
+            <p class="home-hint-title">每日打卡未完整</p>
+            <p class="home-hint-sub">需同时具备收缩压、舒张压、心率与血糖记录。请点下方按钮到「健康」核对或语音补充。</p>
+            <button type="button" class="home-hint-btn" @click="goHealthTab">去补全打卡</button>
           </div>
 
           <div class="voice-action-row">
@@ -779,18 +906,15 @@ watch(showRecordDrawer, (open) => {
                     activeAppointmentDoctorIds.has(String(item.userId))
                       ? '预约处理中'
                       : doctorTodayAvailableIds.has(String(item.userId))
-                        ? '今日可预约'
-                        : '今日不可约'
+                        ? '今日有号'
+                        : '可选其他日期'
                   }}
                 </div>
               </div>
               <button
-                :disabled="
-                  activeAppointmentDoctorIds.has(String(item.userId)) ||
-                  !doctorTodayAvailableIds.has(String(item.userId))
-                "
+                :disabled="activeAppointmentDoctorIds.has(String(item.userId))"
                 class="book-btn"
-                @click="bookNow(item)"
+                @click="openBookDialog(item)"
               >
                 <span class="book-top">
                   {{ activeAppointmentDoctorIds.has(String(item.userId)) ? '已预约' : '预约' }}
@@ -799,9 +923,7 @@ watch(showRecordDrawer, (open) => {
                   {{
                     activeAppointmentDoctorIds.has(String(item.userId))
                       ? '处理中'
-                      : !doctorTodayAvailableIds.has(String(item.userId))
-                        ? '今日满号/无排班'
-                        : '挂号'
+                      : '选日期'
                   }}
                 </span>
               </button>
@@ -871,6 +993,39 @@ watch(showRecordDrawer, (open) => {
         </div>
       </div>
 
+      <el-dialog
+        v-model="showBookDialog"
+        title="选择预约日期"
+        width="92%"
+        class="book-schedule-dialog"
+        destroy-on-close
+        align-center
+      >
+        <p v-if="bookDoctor" class="book-dialog-tip">为「{{ bookDoctor.realName }}」医生选择有号源的日期与时段</p>
+        <div v-loading="loadingSchedules" class="book-dialog-body">
+          <el-radio-group v-if="scheduleRows.length" v-model="pickedScheduleId" class="schedule-radio-group">
+            <el-radio
+              v-for="row in scheduleRows"
+              :key="row.scheduleId"
+              :label="row.scheduleId"
+              class="schedule-radio-item"
+            >
+              {{ row.workDate }} {{ row.timeSlotText }} · 剩余号源 {{ row.remainCount }}
+            </el-radio>
+          </el-radio-group>
+          <el-empty v-else-if="!loadingSchedules" description="暂无可预约号源" />
+        </div>
+        <template #footer>
+          <el-button @click="showBookDialog = false">取消</el-button>
+          <el-button type="primary" :disabled="!pickedScheduleId" @click="confirmBookFromDialog">确认预约</el-button>
+        </template>
+      </el-dialog>
+
+      <div v-if="showAsrBar" class="asr-bar" role="region" aria-label="语音识别">
+        <div class="asr-bar-title">正在聆听（可连续多句）</div>
+        <div class="asr-bar-preview">{{ asrLiveText || '请对着手机说话…' }}</div>
+        <button type="button" class="asr-bar-done" @click="finishContinuousAsr">说完了</button>
+      </div>
     </div>
   </div>
 </template>
@@ -911,6 +1066,47 @@ watch(showRecordDrawer, (open) => {
 
 .elderly-page.font-xxl {
   --font-multiplier: 1.08;
+}
+
+.elderly-page.font-xxl .doctor-card {
+  grid-template-columns: 64px minmax(0, 1fr) 72px;
+  align-items: stretch;
+}
+
+.elderly-page.font-xxl .avatar {
+  width: 64px;
+  height: 64px;
+  font-size: 26px;
+}
+
+.elderly-page.font-xxl .doctor-name,
+.elderly-page.font-xxl .doctor-state {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.elderly-page.font-xxl .book-btn {
+  height: auto;
+  min-height: 56px;
+  padding: 8px 4px;
+  font-size: calc(15px * var(--font-multiplier));
+}
+
+.elderly-page.font-xxl .book-bottom {
+  display: none;
+}
+
+.elderly-page.font-xxl .setting-row,
+.elderly-page.font-xxl .setting-tip {
+  font-size: calc(14px * var(--font-multiplier));
+}
+
+.elderly-page.font-xxl .setting-action-btn {
+  font-size: calc(13px * var(--font-multiplier));
+  height: auto;
+  min-height: 34px;
+  padding: 6px 12px;
 }
 
 .header {
@@ -1121,9 +1317,15 @@ watch(showRecordDrawer, (open) => {
 
 .mine-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
+}
+
+.mine-head .title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 
 .record-entry {
@@ -1342,6 +1544,87 @@ watch(showRecordDrawer, (open) => {
   color: #dc2626;
 }
 
+.home-hint-card {
+  margin: 12px 16px 0;
+  padding: 14px 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f0f7ff 0%, #e8f2fc 100%);
+  border: 1px solid #c5daf3;
+  color: #1e3a5f;
+}
+
+.home-hint-card.mild {
+  background: linear-gradient(135deg, #fff8f0 0%, #fff2e6 100%);
+  border-color: #f5d0a8;
+}
+
+.home-hint-title {
+  margin: 0 0 8px;
+  font-size: calc(20px * var(--font-multiplier));
+  font-weight: 800;
+}
+
+.home-hint-sub {
+  margin: 0 0 12px;
+  font-size: calc(15px * var(--font-multiplier));
+  line-height: 1.55;
+  color: #475569;
+}
+
+.home-hint-btn {
+  width: 100%;
+  height: 48px;
+  border: none;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #2389df 0%, #43a8ff 100%);
+  color: #fff;
+  font-size: calc(18px * var(--font-multiplier));
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.asr-bar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 76px;
+  z-index: 50;
+  padding: 12px 14px 14px;
+  border-radius: 14px;
+  background: rgba(15, 40, 70, 0.92);
+  color: #f1f5f9;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(148, 197, 255, 0.35);
+}
+
+.asr-bar-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.asr-bar-preview {
+  min-height: 44px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.45;
+  color: #e2e8f0;
+  margin-bottom: 10px;
+}
+
+.asr-bar-done {
+  width: 100%;
+  height: 46px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #22c55e 0%, #4ade80 100%);
+  color: #052e16;
+  font-size: 17px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .voice-action-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1494,5 +1777,30 @@ watch(showRecordDrawer, (open) => {
   font-size: 12px;
   color: #64748b;
   line-height: 1.4;
+}
+
+.book-dialog-tip {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #334155;
+}
+
+.book-dialog-body {
+  min-height: 80px;
+}
+
+.schedule-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.schedule-radio-item {
+  margin-right: 0;
+  height: auto;
+  white-space: normal;
+  align-items: flex-start;
+  line-height: 1.35;
 }
 </style>

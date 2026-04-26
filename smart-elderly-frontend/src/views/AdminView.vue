@@ -1,6 +1,5 @@
-# AdminView.vue
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -10,6 +9,8 @@ const router = useRouter()
 const timeText = ref('00:00:00')
 const chartRef = ref(null)
 let chartInstance = null
+let clockTimer = null
+let dataPollTimer = null
 
 // 响应式数据源
 const stats = ref({
@@ -19,11 +20,52 @@ const stats = ref({
   monthlyEmergencies: 0
 })
 const orderList = ref([])
+const showStatDetail = ref(false)
+const statDetailTitle = ref('')
+const statDetailRows = ref([])
+const statDetailLoading = ref(false)
+const statTableColumns = ref([])
 
 // 🌟 AI 诊断相关响应式变量
 const showAiDialog = ref(false)
 const aiLoading = ref(false)
 const aiReport = ref('')
+const aiArchiveElderId = ref('')
+
+/** 从工单文案中解析 1–12 栋，用于态势图高亮（不再写死 3 栋） */
+const extractBuildingNums = (text) => {
+  if (text == null || text === '') return []
+  const s = String(text)
+  const found = new Set()
+  const patterns = [/(\d{1,2})\s*栋/g, /第\s*(\d{1,2})\s*栋/g, /(\d{1,2})\s*号楼/g]
+  for (const re of patterns) {
+    let m
+    const r = new RegExp(re.source, re.flags)
+    while ((m = r.exec(s))) {
+      const n = parseInt(m[1], 10)
+      if (!Number.isNaN(n) && n >= 1 && n <= 12) found.add(n)
+    }
+  }
+  return [...found]
+}
+
+const alarmBuildingNumbers = computed(() => {
+  const set = new Set()
+  for (const o of orderList.value) {
+    // 方案2：仅“待处理/处理中”参与态势高亮，不包含“已解决”
+    if (!(o.status === '待处理' || o.status === '家属处理中' || o.status === '社区已接单')) continue
+    for (const n of extractBuildingNums(o.content)) set.add(n)
+  }
+  return set
+})
+
+const mapStatusNote = computed(() => {
+  const nums = [...alarmBuildingNumbers.value].sort((a, b) => a - b)
+  if (nums.length === 0) return '当前无待处理/处理中工单关联楼栋，网格为常态监测'
+  return `待处理/处理中关联楼栋：${nums.map((n) => `${n}栋`).join('、')}`
+})
+
+const canResolveOrder = (status) => status === '家属处理中' || status === '社区已接单'
 
 // 时间更新逻辑
 const updateTime = () => {
@@ -39,7 +81,7 @@ const initChart = () => {
   chartInstance.setOption({
     backgroundColor: 'transparent',
     color: ['#1890FF', '#52C41A', '#E6A23C', '#FF4D4F'],
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, textStyle: { color: '#fff' } },
+    tooltip: { trigger: 'item', axisPointer: { type: 'none' }, textStyle: { color: '#fff' } },
     grid: { left: '3%', right: '4%', bottom: '3%', top: '20%', containLabel: true },
     xAxis: {
       type: 'value',
@@ -125,7 +167,8 @@ const runAiPrediction = () => {
   }).then(async ({ value }) => {
     // 2. 用户点击确认后，拿到真实输入的 ID
     const elderId = value
-    
+    aiArchiveElderId.value = elderId
+
     showAiDialog.value = true // 打开报告展示弹窗
     aiLoading.value = true    // 开启炫酷加载动画
     aiReport.value = ''       // 清空上一次的旧报告
@@ -149,6 +192,28 @@ const runAiPrediction = () => {
   })
 }
 
+const archiveAiReport = () => {
+  const report = (aiReport.value || '').trim()
+  if (report) {
+    const key = 'community_ai_risk_archives'
+    let list = []
+    try {
+      list = JSON.parse(localStorage.getItem(key) || '[]')
+      if (!Array.isArray(list)) list = []
+    } catch {
+      list = []
+    }
+    list.unshift({
+      at: new Date().toISOString(),
+      elderId: aiArchiveElderId.value || '',
+      preview: report.slice(0, 400)
+    })
+    localStorage.setItem(key, JSON.stringify(list.slice(0, 50)))
+  }
+  ElMessage.success('已阅知并归档（本机存储）')
+  showAiDialog.value = false
+}
+
 const resizeChart = () => {
   chartInstance?.resize()
 }
@@ -156,22 +221,77 @@ const resizeChart = () => {
 const goLogin = () => {
   localStorage.removeItem('token_3')
   localStorage.removeItem('token')
+  localStorage.removeItem('userInfo')
   router.push('/login')
+}
+
+const statDetailTitles = {
+  elders: '在册老人名册（最多 200 条）',
+  chronic: '慢病管理关注名单',
+  todayAppointments: '今日门诊预约明细',
+  monthEmergencies: '本月紧急求助记录'
+}
+const statDetailColumnDefs = {
+  elders: [
+    { prop: 'name', label: '姓名', minWidth: 110 },
+    { prop: 'username', label: '账号', minWidth: 120 },
+    { prop: 'userId', label: 'ID', width: 90 }
+  ],
+  chronic: [
+    { prop: 'name', label: '姓名', minWidth: 120 },
+    { prop: 'userId', label: '老人ID', width: 100 }
+  ],
+  todayAppointments: [
+    { prop: 'elderName', label: '老人', minWidth: 90 },
+    { prop: 'doctorName', label: '医生', minWidth: 90 },
+    { prop: 'time', label: '预约时间', minWidth: 120 },
+    { prop: 'status', label: '状态', width: 80 }
+  ],
+  monthEmergencies: [
+    { prop: 'time', label: '时间', minWidth: 110 },
+    { prop: 'elderName', label: '老人', minWidth: 90 },
+    { prop: 'location', label: '地点', minWidth: 140 },
+    { prop: 'statusText', label: '状态', width: 90 }
+  ]
+}
+
+const openStatDetail = async (typeKey) => {
+  statDetailTitle.value = statDetailTitles[typeKey] || '数据明细'
+  statTableColumns.value = statDetailColumnDefs[typeKey] || []
+  showStatDetail.value = true
+  statDetailLoading.value = true
+  statDetailRows.value = []
+  try {
+    const res = await request.get('/api/community/statDetail', { params: { type: typeKey } })
+    if (res.data.code === 200) {
+      statDetailRows.value = res.data.data || []
+    } else {
+      ElMessage.error(res.data.message || '加载失败')
+    }
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('网络异常')
+  } finally {
+    statDetailLoading.value = false
+  }
 }
 
 onMounted(() => {
   updateTime()
-  const timer = setInterval(updateTime, 1000)
+  clockTimer = setInterval(updateTime, 1000)
   initChart()
   fetchStatistics()
   fetchEmergencies()
   window.addEventListener('resize', resizeChart)
-  onUnmounted(() => {
-    clearInterval(timer)
-  })
+  dataPollTimer = setInterval(() => {
+    fetchStatistics()
+    fetchEmergencies()
+  }, 20000)
 })
 
 onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
+  if (dataPollTimer) clearInterval(dataPollTimer)
   window.removeEventListener('resize', resizeChart)
   chartInstance?.dispose()
 })
@@ -181,22 +301,22 @@ onUnmounted(() => {
   <div class="admin-layout">
     <aside class="admin-side">
       <div class="side-label">数据概览</div>
-      <div class="stat-card">
+      <div class="stat-card stat-card-click" @click="openStatDetail('elders')">
         <div class="stat-title">社区老年人口</div>
         <div class="stat-value">{{ stats.totalElders }}</div>
         <div class="stat-trend">实时核准</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card stat-card-click" @click="openStatDetail('chronic')">
         <div class="stat-title">慢病管理人数</div>
         <div class="stat-value">{{ stats.chronicElders }}</div>
         <div class="stat-trend">高危人群监测中</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card stat-card-click" @click="openStatDetail('todayAppointments')">
         <div class="stat-title">今日门诊预约</div>
         <div class="stat-value">{{ stats.todayAppointments }}</div>
         <div class="stat-trend">系统实时同步</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card stat-card-click" @click="openStatDetail('monthEmergencies')">
         <div class="stat-title">紧急求助（本月）</div>
         <div class="stat-value">{{ stats.monthlyEmergencies }}</div>
         <div class="stat-trend">含误触记录</div>
@@ -211,22 +331,23 @@ onUnmounted(() => {
       <div class="main-header">
         <div class="main-title">社区态势监控</div>
         <div class="header-actions">
-          <el-button type="warning" plain size="small" @click="runAiPrediction()">
-            🤖 AI 高危人群巡检
-          </el-button>
+          <el-button type="warning" plain size="small" @click="runAiPrediction()">🤖 AI 高危人群巡检</el-button>
           <div class="main-time">{{ timeText }}</div>
+        </div>
+        <div class="header-center-logout">
+          <el-button type="danger" round class="logout-main-btn" @click="goLogin">安全退出登录</el-button>
         </div>
       </div>
       <div class="status-panel">
         <div class="grid-map">
           <template v-for="num in 12" :key="num">
-            <div :class="['map-cell', { alarm: num === 3 }]">
+            <div :class="['map-cell', { alarm: alarmBuildingNumbers.has(num) }]">
               <span class="map-cell-label">{{ num }}栋</span>
-              <span v-if="num === 3" class="alarm-dot"></span>
+              <span v-if="alarmBuildingNumbers.has(num)" class="alarm-dot"></span>
             </div>
           </template>
         </div>
-        <div class="map-note">演示状态 · 3栋区域状态异常</div>
+        <div class="map-note">{{ mapStatusNote }}</div>
       </div>
     </section>
 
@@ -256,16 +377,36 @@ onUnmounted(() => {
           @click="handleOrder(order.helpId, 2)"
         >社区接单</el-button>
         <el-button 
-          v-else 
+          v-else-if="canResolveOrder(order.status)" 
           size="small" 
           type="success" 
           class="order-btn" 
           @click="handleOrder(order.helpId, 3)"
         >确认已解决</el-button>
+        <el-button
+          v-else
+          size="small"
+          class="order-btn"
+          disabled
+        >已归档</el-button>
       </div>
       
       <div class="right-exit" @click="goLogin">退出监控中心</div>
     </aside>
+
+    <el-dialog v-model="showStatDetail" :title="statDetailTitle" width="720px" append-to-body destroy-on-close>
+      <el-table v-loading="statDetailLoading" :data="statDetailRows" stripe border max-height="420">
+        <el-table-column
+          v-for="col in statTableColumns"
+          :key="col.prop"
+          :prop="col.prop"
+          :label="col.label"
+          :width="col.width"
+          :min-width="col.minWidth"
+          show-overflow-tooltip
+        />
+      </el-table>
+    </el-dialog>
 
     <el-dialog 
       v-model="showAiDialog" 
@@ -282,7 +423,7 @@ onUnmounted(() => {
         <div v-else class="report-text" v-html="aiReport"></div>
       </div>
       <template #footer>
-        <el-button type="primary" @click="showAiDialog = false">阅知并归档</el-button>
+        <el-button type="primary" @click="archiveAiReport">阅知并归档</el-button>
       </template>
     </el-dialog>
   </div>
@@ -291,9 +432,11 @@ onUnmounted(() => {
 <style scoped>
 .admin-layout {
   display: flex;
-  width: 100vw;
+  width: 100%;
+  min-width: 960px;
   height: 100vh;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   background:
     radial-gradient(circle at 22% 12%, rgba(62, 137, 255, 0.18), transparent 30%),
     radial-gradient(circle at 78% 88%, rgba(49, 194, 156, 0.15), transparent 26%),
@@ -309,7 +452,9 @@ onUnmounted(() => {
 }
 
 .admin-side {
+  flex: 0 0 280px;
   width: 280px;
+  min-width: 240px;
   border-right: 1px solid rgba(123, 176, 236, 0.16);
   background: rgba(15, 33, 53, 0.65);
   backdrop-filter: blur(2px);
@@ -331,6 +476,14 @@ onUnmounted(() => {
   margin-bottom: 12px;
   border: 1px solid rgba(120, 175, 235, 0.18);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.stat-card-click {
+  cursor: pointer;
+}
+
+.stat-card-click:hover {
+  border-color: rgba(180, 220, 255, 0.45);
 }
 
 .stat-title {
@@ -373,7 +526,8 @@ onUnmounted(() => {
 }
 
 .admin-main {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 380px;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -397,6 +551,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 20px;
+}
+
+.header-center-logout {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+}
+
+.logout-main-btn {
+  min-width: 200px;
+  font-weight: 700;
 }
 
 .main-time {
@@ -464,7 +629,9 @@ onUnmounted(() => {
 }
 
 .admin-right {
+  flex: 0 0 300px;
   width: 300px;
+  min-width: 260px;
   border-left: 1px solid rgba(123, 176, 236, 0.16);
   background: rgba(14, 31, 50, 0.64);
   backdrop-filter: blur(2px);

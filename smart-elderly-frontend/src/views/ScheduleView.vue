@@ -1,15 +1,14 @@
-# ScheduleView.vue - 医生界面，查看排班计划的组件
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
 
-const router = useRouter()
-const goBack = () => router.push('/doctor')
-
 const scheduleItems = ref([])
 const loading = ref(false)
+const showPatients = ref(false)
+const patientsLoading = ref(false)
+const patientsRows = ref([])
+const patientsDayLabel = ref('')
 
 const fetchSchedule = async () => {
   loading.value = true
@@ -31,6 +30,30 @@ const fetchSchedule = async () => {
 onMounted(() => {
   fetchSchedule()
 })
+
+const openDayPatients = async (item) => {
+  if (!item?.scheduleId) {
+    ElMessage.warning('缺少排班ID，无法查询')
+    return
+  }
+  patientsDayLabel.value = item.time || item.workDate
+  showPatients.value = true
+  patientsLoading.value = true
+  patientsRows.value = []
+  try {
+    const res = await request.get('/api/doctor/schedule/dayPatients', { params: { scheduleId: item.scheduleId } })
+    if (res.data.code === 200) {
+      patientsRows.value = res.data.data || []
+    } else {
+      ElMessage.error(res.data.message || '查询失败')
+    }
+  } catch (error) {
+    console.error(error)
+    ElMessage.error('网络异常')
+  } finally {
+    patientsLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -38,22 +61,33 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h1>我的排班计划</h1>
-        <p>查看本周排班安排与任务提醒</p>
+        <p>点击某一天可查看该日已预约患者</p>
       </div>
-      <el-button type="primary" @click="goBack">返回预约大厅</el-button>
     </div>
 
     <el-card class="schedule-card" shadow="hover" v-loading="loading">
       <el-empty v-if="scheduleItems.length === 0" description="您近期暂无排班安排" />
       
-      <div class="schedule-row" v-for="(item, index) in scheduleItems" :key="index">
+      <div class="schedule-row schedule-row-click" v-for="(item, index) in scheduleItems" :key="index" @click="openDayPatients(item)">
         <div class="schedule-day">{{ item.day }}</div>
         <div class="schedule-info">
           <div class="schedule-time">{{ item.time }}</div>
           <div class="schedule-note" :class="{'full-booked': item.note.includes('满')}">{{ item.note }}</div>
+          <div class="schedule-hint">点击查看该日患者名单</div>
         </div>
       </div>
     </el-card>
+
+    <el-dialog v-model="showPatients" :title="`已预约患者 · ${patientsDayLabel}`" width="520px" append-to-body destroy-on-close>
+      <div v-loading="patientsLoading">
+        <el-table v-if="patientsRows.length" :data="patientsRows" border stripe max-height="360" size="small">
+          <el-table-column prop="elderName" label="患者" min-width="100" />
+          <el-table-column prop="appointTime" label="预约时间" min-width="150" />
+          <el-table-column prop="statusText" label="状态" width="90" />
+        </el-table>
+        <el-empty v-else-if="!patientsLoading" description="该日暂无预约记录" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -100,6 +134,18 @@ onMounted(() => {
   border-bottom: 1px solid #eaf0f6;
 }
 
+.schedule-row-click {
+  cursor: pointer;
+  border-radius: 10px;
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.schedule-row-click:hover {
+  background: rgba(35, 142, 225, 0.06);
+}
+
 .schedule-row:last-child {
   border-bottom: none;
 }
@@ -125,6 +171,13 @@ onMounted(() => {
   margin-top: 6px;
   font-size: 13px;
   color: #7f92a7;
+}
+
+.schedule-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #238ee1;
+  font-weight: 600;
 }
 
 /* 如果号源满了，可以扩展个标红样式 */

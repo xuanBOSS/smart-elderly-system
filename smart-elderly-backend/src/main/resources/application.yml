@@ -4,12 +4,12 @@ server:
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    # 连接昨天建好的 smart_elderly_db 数据库
+
     url: jdbc:mysql://localhost:3306/smart-elderly-db?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8
     username: root
-    password: 200498  # ❗极其重要：把 200498 换成你电脑上真实的 MySQL 密码！
+    password: 200498  
 
 # MyBatis-Plus 配置
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 开发神器：在控制台打印生成的 SQL 语句
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl 
