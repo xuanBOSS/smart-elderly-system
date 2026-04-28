@@ -73,6 +73,17 @@ public class ElderlyAppointmentService {
             return Result.error("排班与医生不匹配");
         }
 
+        LocalDateTime targetAppointTime = resolveAppointTime(schedule, request.getAppointTime());
+
+        // 只禁止“同一老人同一时段”重复预约（不再限制同一医生的不同时间预约）
+        Long timeConflictCount = appointmentMapper.selectCount(new LambdaQueryWrapper<Appointment>()
+                .eq(Appointment::getUserId, request.getUserId())
+                .in(Appointment::getStatus, 0, 1)
+                .eq(Appointment::getAppointTime, targetAppointTime));
+        if (timeConflictCount != null && timeConflictCount > 0) {
+            return Result.error("该时段已有进行中的预约，请选择其他时段");
+        }
+
         int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
         int maxCapacity = schedule.getMaxCapacity() == null ? 0 : schedule.getMaxCapacity();
         int timeSlot = schedule.getTimeSlot() == null ? 0 : schedule.getTimeSlot();
@@ -103,7 +114,7 @@ public class ElderlyAppointmentService {
         appointment.setUserId(request.getUserId());
         appointment.setDoctorId(schedule.getDoctorId());
         appointment.setStatus(0);
-        appointment.setAppointTime(resolveAppointTime(schedule, request.getAppointTime()));
+        appointment.setAppointTime(targetAppointTime);
         appointmentMapper.insert(appointment);
 
         Map<String, Object> result = new HashMap<>();

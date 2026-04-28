@@ -9,6 +9,7 @@ const loading = ref(false)
 
 const showChartDialog = ref(false)
 const currentPatientName = ref('')
+const currentElderId = ref(null)
 const chartLoading = ref(false)
 const chartRef = ref(null)
 let chartInstance = null
@@ -18,6 +19,12 @@ const indicators = ref({
   bloodPressure: '--/--',
   heartRate: '--',
   bloodSugar: '--'
+})
+const diagnosisRows = ref([])
+const diagnosisSaving = ref(false)
+const diagnosisForm = ref({
+  diagnosisType: '',
+  note: ''
 })
 
 const fetchArchives = async () => {
@@ -38,6 +45,7 @@ const fetchArchives = async () => {
 }
 
 const viewDetails = async (elderId, name) => {
+  currentElderId.value = elderId
   currentPatientName.value = name
   showChartDialog.value = true // 先把弹窗拉出来
   chartLoading.value = true
@@ -53,6 +61,7 @@ const viewDetails = async (elderId, name) => {
         heartRate: latest.heartRate || '--',
         bloodSugar: latest.bloodSugar || '--'
       }
+      diagnosisRows.value = Array.isArray(res.data.data?.diagnosisRecords) ? res.data.data.diagnosisRecords : []
       
       // 2. 等待弹窗DOM渲染完毕后，画折线图
       setTimeout(() => {
@@ -61,12 +70,44 @@ const viewDetails = async (elderId, name) => {
       
     } else {
       ElMessage.error(res.data.message || '获取健康数据失败')
+      diagnosisRows.value = []
     }
   } catch (error) {
     console.error('代码执行或网络异常详细信息:', error)
     ElMessage.error('系统异常，请按F12查看控制台')
+    diagnosisRows.value = []
   } finally {
     chartLoading.value = false
+  }
+}
+
+const saveDiagnosis = async () => {
+  if (!currentElderId.value) {
+    ElMessage.warning('请先选择患者')
+    return
+  }
+  if (!diagnosisForm.value.diagnosisType) {
+    ElMessage.warning('请选择诊断类型')
+    return
+  }
+  diagnosisSaving.value = true
+  try {
+    const res = await request.post('/api/doctor/diagnosis', {
+      elderId: currentElderId.value,
+      diagnosisType: diagnosisForm.value.diagnosisType,
+      note: diagnosisForm.value.note
+    })
+    if (res.data.code === 200) {
+      ElMessage.success('诊断记录已保存')
+      diagnosisForm.value.note = ''
+      await viewDetails(currentElderId.value, currentPatientName.value)
+    } else {
+      ElMessage.error(res.data.message || '保存失败')
+    }
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    diagnosisSaving.value = false
   }
 }
 
@@ -153,6 +194,37 @@ onMounted(() => {
           </div>
         </div>
         <div ref="chartRef" style="width: 100%; height: 280px; margin-top: 20px;"></div>
+        <div class="diag-create">
+          <div class="diag-title">新增诊断记录</div>
+          <div class="diag-form-row">
+            <el-select v-model="diagnosisForm.diagnosisType" placeholder="选择诊断类型" style="width: 180px;">
+              <el-option label="高血压" value="高血压" />
+              <el-option label="低血压" value="低血压" />
+              <el-option label="糖尿病" value="糖尿病" />
+              <el-option label="心率异常" value="心率异常" />
+            </el-select>
+            <el-input
+              v-model="diagnosisForm.note"
+              placeholder="补充说明（可选）"
+              maxlength="200"
+              show-word-limit
+            />
+            <el-button type="primary" :loading="diagnosisSaving" @click="saveDiagnosis">保存</el-button>
+          </div>
+        </div>
+        <div class="diag-section">
+          <div class="diag-title">历史诊断结果</div>
+          <el-empty v-if="diagnosisRows.length === 0" description="暂无诊断记录" :image-size="48" />
+          <div v-else class="diag-list">
+            <div v-for="row in diagnosisRows" :key="row.diagnosisId" class="diag-item">
+              <div class="diag-main">
+                <span class="diag-type">{{ row.type }}</span>
+                <span class="diag-note">{{ row.note || '无补充说明' }}</span>
+              </div>
+              <div class="diag-meta">{{ row.time }} · {{ row.doctorName }}</div>
+            </div>
+          </div>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -256,4 +328,66 @@ onMounted(() => {
 .text-red { color: #FF4D4F; }
 .text-green { color: #52C41A; }
 .text-blue { color: #1890FF; }
+
+.diag-section {
+  margin-top: 16px;
+  border-top: 1px solid #e8eef5;
+  padding-top: 12px;
+}
+
+.diag-create {
+  margin-top: 12px;
+  border-top: 1px solid #e8eef5;
+  padding-top: 12px;
+}
+
+.diag-form-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.diag-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+.diag-list {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.diag-item {
+  padding: 8px 0;
+  border-bottom: 1px solid #eef3f8;
+}
+
+.diag-item:last-child {
+  border-bottom: none;
+}
+
+.diag-main {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.diag-type {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.diag-note {
+  font-size: 12px;
+  color: #475569;
+}
+
+.diag-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
 </style>

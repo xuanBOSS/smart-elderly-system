@@ -114,7 +114,9 @@ const voiceBroadcastText = computed(() => {
   const bp = bloodPressureText.value
   const hr = health.value?.heartRate || '--'
   const sugar = health.value?.bloodSugar || '--'
-  return `您好，${name}。当前血压 ${bp}，心率 ${hr}，血糖 ${sugar}。请按时服药，注意休息。`
+  const meds = (health.value?.medicationInfo || '').trim()
+  const medText = meds ? `今日用药提醒：${meds}。` : '今日暂无明确用药提醒，请遵医嘱按时服药。'
+  return `您好，${name}。当前血压 ${bp}，心率 ${hr}，血糖 ${sugar}。${medText}请注意休息。`
 })
 
 const doctorCards = computed(() => {
@@ -355,7 +357,8 @@ const loadHealth = async () => {
       bloodPressureHigh: data.data?.bloodPressureHigh,
       bloodPressureLow: data.data?.bloodPressureLow,
       heartRate: data.data?.heartRate,
-      bloodSugar: data.data?.bloodSugar
+      bloodSugar: data.data?.bloodSugar,
+      medicationInfo: data.data?.medicationInfo || ''
     }
   } catch (error) {
     health.value = null
@@ -561,8 +564,52 @@ let asrRecognition = null
 const showAsrBar = ref(false)
 const asrLiveText = ref('')
 let asrAgg = ''
+let asrManualStop = false
+let asrFinalHandler = null
+let asrIdleTimer = null
+let asrIdlePrompting = false
+const ASR_IDLE_TIMEOUT_MS = 60000
+
+const clearAsrIdleTimer = () => {
+  if (asrIdleTimer) {
+    clearTimeout(asrIdleTimer)
+    asrIdleTimer = null
+  }
+}
+
+const resetAsrIdleTimer = () => {
+  clearAsrIdleTimer()
+  if (!isListening.value || asrManualStop) return
+  asrIdleTimer = setTimeout(async () => {
+    if (!isListening.value || asrManualStop || asrIdlePrompting) return
+    asrIdlePrompting = true
+    try {
+      await ElMessageBox.confirm(
+        '您已经 60 秒没有说话了，是否继续聆听？',
+        '语音录入提醒',
+        {
+          confirmButtonText: '继续聆听',
+          cancelButtonText: '结束本次录入',
+          type: 'warning',
+          closeOnClickModal: false,
+          closeOnPressEscape: false
+        }
+      )
+      // 继续聆听：重置超时计时
+      resetAsrIdleTimer()
+    } catch {
+      // 结束录入：等同用户点击“说完了”
+      finishContinuousAsr()
+    } finally {
+      asrIdlePrompting = false
+    }
+  }, ASR_IDLE_TIMEOUT_MS)
+}
 
 const finishContinuousAsr = () => {
+  asrManualStop = true
+  isListening.value = false
+  clearAsrIdleTimer()
   try {
     asrRecognition?.stop()
   } catch {
@@ -583,6 +630,8 @@ const startContinuousRecognition = ({ onFinal, tip }) => {
 
   asrAgg = ''
   asrLiveText.value = ''
+  asrManualStop = false
+  asrFinalHandler = onFinal
   const recognition = new SpeechRecognition()
   asrRecognition = recognition
   recognition.lang = 'zh-CN'
@@ -598,31 +647,50 @@ const startContinuousRecognition = ({ onFinal, tip }) => {
       else interim += piece
     }
     asrLiveText.value = (asrAgg + interim).trim()
+    // 一旦检测到讲话（含中间结果），重置“未说话超时”计时
+    resetAsrIdleTimer()
   }
 
   recognition.onerror = (ev) => {
     const code = ev?.error
     if (code === 'aborted') return
+    // 非人工停止的异常统一结束本轮识别
+    asrManualStop = true
     isListening.value = false
     showAsrBar.value = false
     asrRecognition = null
+    clearAsrIdleTimer()
     if (code === 'not-allowed') {
       speak('请先允许浏览器使用麦克风，再重试语音录入。')
     }
   }
 
   recognition.onend = async () => {
+    // 未手动结束时，自动续听，避免“提示框闪现后消失”
+    if (!asrManualStop && isListening.value) {
+      try {
+        recognition.start()
+        return
+      } catch {
+        // 续听失败则按正常结束流程回落
+      }
+    }
+
     asrRecognition = null
     isListening.value = false
     showAsrBar.value = false
+    clearAsrIdleTimer()
     const t = asrAgg.trim()
     asrAgg = ''
     asrLiveText.value = ''
-    if (t) await onFinal(t)
+    if (t && asrFinalHandler) await asrFinalHandler(t)
+    asrFinalHandler = null
+    asrManualStop = false
   }
 
   isListening.value = true
   showAsrBar.value = true
+  resetAsrIdleTimer()
   ElMessage({
     message: tip || '正在持续聆听：可分段说多句，说完请点击「说完了」',
     type: 'warning',

@@ -3,10 +3,12 @@ package com.community.smartelderlybackend.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.entity.Appointment;
+import com.community.smartelderlybackend.entity.DiagnosisRecord;
 import com.community.smartelderlybackend.entity.DoctorSchedule;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
 import com.community.smartelderlybackend.mapper.AppointmentMapper;
+import com.community.smartelderlybackend.mapper.DiagnosisRecordMapper;
 import com.community.smartelderlybackend.mapper.DoctorScheduleMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
 import com.community.smartelderlybackend.mapper.UserMapper;
@@ -40,6 +42,8 @@ public class DoctorController {
     private HealthRecordsMapper healthRecordsMapper;
     @Autowired
     private DoctorScheduleMapper doctorScheduleMapper;
+    @Autowired
+    private DiagnosisRecordMapper diagnosisRecordMapper;
 
     @GetMapping("/appointments/pending")
     @Operation(summary = "获取当前医生的待处理预约列表")
@@ -92,10 +96,29 @@ public class DoctorController {
         if (appointment.getDoctorId() == null || !appointment.getDoctorId().equals(doctorId)) {
             return Result.error("无权处理他人的预约");
         }
+        Integer oldStatus = appointment.getStatus();
 
         // 1. 更新预约单状态
         appointment.setStatus(action);
         appointmentMapper.updateById(appointment);
+
+        // 2. 若由“待确认(0)”改为“已确认(1)”，同步增加排班 booked_count
+        if ((oldStatus == null || Integer.valueOf(0).equals(oldStatus)) && Integer.valueOf(1).equals(action)
+                && appointment.getAppointTime() != null && appointment.getDoctorId() != null) {
+            LocalDate workDate = appointment.getAppointTime().toLocalDate();
+            int timeSlot = appointment.getAppointTime().getHour() < 12 ? 0 : 1;
+            DoctorSchedule schedule = doctorScheduleMapper.selectOne(new LambdaQueryWrapper<DoctorSchedule>()
+                    .eq(DoctorSchedule::getDoctorId, appointment.getDoctorId())
+                    .eq(DoctorSchedule::getWorkDate, workDate)
+                    .eq(DoctorSchedule::getTimeSlot, timeSlot));
+            if (schedule != null) {
+                int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
+                int maxCapacity = schedule.getMaxCapacity() == null ? 0 : schedule.getMaxCapacity();
+                int nextBooked = maxCapacity > 0 ? Math.min(bookedCount + 1, maxCapacity) : bookedCount + 1;
+                schedule.setBookedCount(nextBooked);
+                doctorScheduleMapper.updateById(schedule);
+            }
+        }
 
         return Result.success(action == 1 ? "预约已确认" : "预约已拒绝");
     }
@@ -290,5 +313,45 @@ public class DoctorController {
 
     private boolean apptSlotEquals(Integer scheduleSlot, int apptSlot) {
         return scheduleSlot != null && scheduleSlot == apptSlot;
+    }
+
+    @PostMapping("/diagnosis")
+    @Operation(summary = "医生新增患者诊断记录")
+    public Result<String> createDiagnosis(
+            @RequestBody Map<String, Object> payload,
+            HttpServletRequest request) {
+        Long doctorId = Long.valueOf(request.getAttribute("userId").toString());
+        Long elderId = payload.get("elderId") == null ? null : Long.valueOf(payload.get("elderId").toString());
+        String diagnosisType = payload.get("diagnosisType") == null ? "" : payload.get("diagnosisType").toString().trim();
+        String note = payload.get("note") == null ? "" : payload.get("note").toString().trim();
+
+        if (elderId == null) {
+            return Result.error("elderId 不能为空");
+        }
+        if (diagnosisType.isEmpty()) {
+            return Result.error("诊断类型不能为空");
+        }
+        List<String> supported = List.of("高血压", "低血压", "糖尿病", "心率异常");
+        if (!supported.contains(diagnosisType)) {
+            return Result.error("诊断类型不支持");
+        }
+
+        Long hasPatient = appointmentMapper.selectCount(new LambdaQueryWrapper<Appointment>()
+                .eq(Appointment::getDoctorId, doctorId)
+                .eq(Appointment::getUserId, elderId)
+                .eq(Appointment::getStatus, 1));
+        if (hasPatient == null || hasPatient == 0) {
+            return Result.error("仅可为已就诊患者新增诊断");
+        }
+
+        DiagnosisRecord record = new DiagnosisRecord();
+        record.setUserId(elderId);
+        record.setDoctorId(doctorId);
+        record.setDiagnosisType(diagnosisType);
+        record.setNote(note);
+        record.setActive(1);
+        record.setDiagnosisTime(LocalDateTime.now());
+        diagnosisRecordMapper.insert(record);
+        return Result.success("诊断记录已保存");
     }
 }

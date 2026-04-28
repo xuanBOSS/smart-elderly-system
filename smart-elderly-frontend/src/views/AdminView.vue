@@ -81,8 +81,16 @@ const initChart = () => {
   chartInstance.setOption({
     backgroundColor: 'transparent',
     color: ['#1890FF', '#52C41A', '#E6A23C', '#FF4D4F'],
-    tooltip: { trigger: 'item', axisPointer: { type: 'none' }, textStyle: { color: '#fff' } },
-    grid: { left: '3%', right: '4%', bottom: '3%', top: '20%', containLabel: true },
+    tooltip: {
+      trigger: 'item',
+      axisPointer: { type: 'none' },
+      backgroundColor: 'rgba(15, 33, 53, 0.96)',
+      borderColor: 'rgba(120, 175, 235, 0.45)',
+      borderWidth: 1,
+      textStyle: { color: '#eaf4ff', fontSize: 12 },
+      formatter: (params) => `${params.name}：${params.value}`
+    },
+    grid: { left: '5%', right: '12%', bottom: '4%', top: '20%', containLabel: true },
     xAxis: {
       type: 'value',
       axisLine: { lineStyle: { color: 'rgba(255,255,255,0.3)' } },
@@ -452,9 +460,9 @@ onUnmounted(() => {
 }
 
 .admin-side {
-  flex: 0 0 280px;
-  width: 280px;
-  min-width: 240px;
+  flex: 0 0 340px;
+  width: 340px;
+  min-width: 300px;
   border-right: 1px solid rgba(123, 176, 236, 0.16);
   background: rgba(15, 33, 53, 0.65);
   backdrop-filter: blur(2px);
@@ -493,10 +501,12 @@ onUnmounted(() => {
 
 .stat-value {
   margin-top: 8px;
-  font-size: 30px;
+  font-size: 34px;
   font-weight: 700;
   color: #f4fbff;
   letter-spacing: 0.3px;
+  line-height: 1.2;
+  word-break: break-all;
 }
 
 .stat-trend {
@@ -522,7 +532,7 @@ onUnmounted(() => {
 
 .admin-chart {
   width: 100%;
-  height: 160px;
+  height: 190px;
 }
 
 .admin-main {
@@ -537,6 +547,8 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   margin-bottom: 20px;
 }
 
@@ -550,17 +562,18 @@ onUnmounted(() => {
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 20px;
 }
 
 .header-center-logout {
-  margin-top: 8px;
+  margin-top: 0;
   display: flex;
   justify-content: center;
 }
 
 .logout-main-btn {
-  min-width: 200px;
+  min-width: 160px;
   font-weight: 700;
 }
 
@@ -674,6 +687,8 @@ onUnmounted(() => {
   font-size: 13px;
   color: rgba(227, 239, 250, 0.92);
   line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .order-status {

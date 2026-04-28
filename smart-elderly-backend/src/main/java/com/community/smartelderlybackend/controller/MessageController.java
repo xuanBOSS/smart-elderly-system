@@ -80,6 +80,8 @@ public class MessageController {
                 .orderByDesc(Appointment::getAppointTime)
                 .last("LIMIT 5");
         List<Appointment> appointments = appointmentMapper.selectList(appointmentWrapper);
+        LocalDateTime now = LocalDateTime.now();
+        int idx = 0;
         for (Appointment appointment : appointments) {
             User doctor = userMapper.selectById(appointment.getDoctorId());
             String doctorName = doctor != null ? doctor.getRealName() : "医生";
@@ -90,7 +92,8 @@ public class MessageController {
                     appointment.getAppointId() + 100000,
                     "INFO",
                     "门诊预约已确认（" + doctorName + " " + dateText + "）",
-                    appointment.getAppointTime()
+                    // appointment 仅记录就诊时间，提醒时间用“当前时间”更贴近实时消息体验
+                    now.minusSeconds(idx++)
             ));
         }
 
@@ -145,7 +148,7 @@ public class MessageController {
         if (time == null) {
             return "--:--";
         }
-        return time.format(DateTimeFormatter.ofPattern("HH:mm"));
+        return time.format(DateTimeFormatter.ofPattern("MM/dd HH:mm:ss"));
     }
 
     private static class NoticeItem {

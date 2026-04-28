@@ -321,6 +321,18 @@ SET blood_sugar = NULL
 WHERE blood_sugar IS NOT NULL
   AND (blood_sugar < 1 OR blood_sugar > 40);
 
+-- 7.4 用药信息清洗：去除“指标评价/建议”类尾部描述，仅保留药名与用法
+-- 例如：阿司匹林，每日一次，血压极佳 -> 阿司匹林，每日一次
+UPDATE health_records
+SET medication_info = TRIM(REGEXP_REPLACE(
+    medication_info,
+    '[，,;；](血压|血糖|心率|指标|情况|状态|复查|建议|注意|改善|回落|正常|达标|平稳|良好|优秀|极佳).*$',
+    ''
+))
+WHERE medication_info IS NOT NULL
+  AND medication_info <> ''
+  AND medication_info REGEXP '[，,;；](血压|血糖|心率|指标|情况|状态|复查|建议|注意|改善|回落|正常|达标|平稳|良好|优秀|极佳)';
+
 -- --------------------------------------------
 -- 7A. 清理 diagnosis_record 非法数据
 -- --------------------------------------------

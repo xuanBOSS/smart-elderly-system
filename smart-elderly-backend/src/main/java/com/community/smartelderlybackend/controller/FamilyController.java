@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.dto.ElderlyAppointmentRequest;
 import com.community.smartelderlybackend.entity.FamilyBind;
+import com.community.smartelderlybackend.entity.Appointment;
 import com.community.smartelderlybackend.entity.EmergencyRecord;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
+import com.community.smartelderlybackend.mapper.AppointmentMapper;
 import com.community.smartelderlybackend.mapper.EmergencyRecordMapper;
 import com.community.smartelderlybackend.mapper.FamilyBindMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
@@ -35,6 +37,8 @@ public class FamilyController {
     private HealthRecordsMapper healthRecordsMapper;
     @Autowired
     private EmergencyRecordMapper emergencyRecordMapper;
+    @Autowired
+    private AppointmentMapper appointmentMapper;
     @Autowired
     private com.community.smartelderlybackend.service.ElderlyAppointmentService elderlyAppointmentService;
 
@@ -98,6 +102,7 @@ public class FamilyController {
         latest.put("bloodPressure", latestRecord.getBloodPressureHigh() + "/" + latestRecord.getBloodPressureLow());
         latest.put("heartRate", latestRecord.getHeartRate() != null ? latestRecord.getHeartRate().toString() : "--");
         latest.put("bloodSugar", latestRecord.getBloodSugar() != null ? latestRecord.getBloodSugar().toString() : "--");
+        latest.put("medicationInfo", latestRecord.getMedicationInfo() != null ? latestRecord.getMedicationInfo() : "");
 
         finalData.put("trend", trend);
         finalData.put("latest", latest);
@@ -178,6 +183,41 @@ public class FamilyController {
             return Result.error("您未绑定该老人或无权代为预约");
         }
         return elderlyAppointmentService.createPendingAppointment(request);
+    }
+
+    @GetMapping("/appointments")
+    @Operation(summary = "家属查看绑定老人的预约记录")
+    public Result<List<Map<String, Object>>> getElderAppointments(
+            @RequestParam Long elderId,
+            HttpServletRequest request) {
+        if (!isFamilyBoundToElder(request, elderId)) {
+            return Result.error("您未绑定该老人或无权查看");
+        }
+        List<Appointment> appointments = appointmentMapper.selectList(new LambdaQueryWrapper<Appointment>()
+                .eq(Appointment::getUserId, elderId)
+                .orderByDesc(Appointment::getAppointTime));
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MM/dd HH:mm");
+        List<Map<String, Object>> resultList = new ArrayList<>();
+        for (Appointment appt : appointments) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", appt.getAppointId());
+            map.put("appointId", appt.getAppointId());
+            map.put("doctorId", appt.getDoctorId());
+            User doctor = userMapper.selectById(appt.getDoctorId());
+            map.put("doctorName", doctor != null ? doctor.getRealName() : "未知医生");
+            map.put("createTime", appt.getAppointTime() != null ? appt.getAppointTime().format(formatter) : "");
+            Integer status = appt.getStatus();
+            String statusText = "未知";
+            if (status != null) {
+                if (status == 0) statusText = "待确认";
+                else if (status == 1) statusText = "已确认";
+                else if (status == 2) statusText = "已取消";
+            }
+            map.put("status", statusText);
+            resultList.add(map);
+        }
+        return Result.success(resultList);
     }
 
     @PostMapping("/emergency/resolve")
