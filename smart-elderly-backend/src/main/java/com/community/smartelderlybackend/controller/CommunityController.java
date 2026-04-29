@@ -25,6 +25,7 @@ import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -284,6 +285,10 @@ public class CommunityController {
         wrapper.in(EmergencyRecord::getStatus, 0, 1, 2, 3)
                 .orderByDesc(EmergencyRecord::getHelpTime);
         List<EmergencyRecord> records = emergencyRecordMapper.selectList(wrapper);
+        records.sort(Comparator
+                .comparingInt(this::emergencyStatusSortRank).reversed()
+                .thenComparing(Comparator.comparingInt(this::emergencyTypeSortRank).reversed())
+                .thenComparing(EmergencyRecord::getHelpTime, Comparator.nullsLast(Comparator.reverseOrder())));
 
         List<Map<String, Object>> resultList = new ArrayList<>();
         List<BuildingGeoZone> zones = buildingGeoZoneMapper.selectList(new LambdaQueryWrapper<BuildingGeoZone>()
@@ -325,6 +330,28 @@ public class CommunityController {
             resultList.add(map);
         }
         return Result.success(resultList);
+    }
+
+    private int emergencyStatusSortRank(EmergencyRecord record) {
+        Integer status = record.getStatus();
+        if (status == null) {
+            return 0;
+        }
+        return switch (status) {
+            case 0 -> 3;
+            case 1, 2 -> 2;
+            case 3 -> 1;
+            default -> 0;
+        };
+    }
+
+    private int emergencyTypeSortRank(EmergencyRecord record) {
+        String handleResult = record.getHandleResult();
+        if (handleResult != null &&
+                (handleResult.contains("\u6454") || handleResult.contains("\u6655") || handleResult.contains("\u5feb"))) {
+            return 1;
+        }
+        return 0;
     }
 
     private static final Pattern BUILDING_PATTERN = Pattern.compile("(\\d{1,2})\\s*(?:栋|号楼)");

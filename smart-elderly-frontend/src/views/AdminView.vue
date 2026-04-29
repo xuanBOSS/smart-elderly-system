@@ -241,25 +241,25 @@ const statDetailTitles = {
 }
 const statDetailColumnDefs = {
   elders: [
-    { prop: 'name', label: '姓名', minWidth: 110 },
-    { prop: 'username', label: '账号', minWidth: 120 },
-    { prop: 'userId', label: 'ID', width: 90 }
+    { prop: 'name', label: '姓名', minWidth: 90 },
+    { prop: 'username', label: '账号', minWidth: 90 },
+    { prop: 'userId', label: 'ID', width: 140 }
   ],
   chronic: [
-    { prop: 'name', label: '姓名', minWidth: 120 },
-    { prop: 'userId', label: '老人ID', width: 100 }
+    { prop: 'name', label: '姓名', minWidth: 90 },
+    { prop: 'userId', label: '老人ID', width: 150 }
   ],
   todayAppointments: [
-    { prop: 'elderName', label: '老人', minWidth: 90 },
-    { prop: 'doctorName', label: '医生', minWidth: 90 },
+    { prop: 'elderName', label: '老人', minWidth: 70 },
+    { prop: 'doctorName', label: '医生', minWidth: 70 },
     { prop: 'time', label: '预约时间', minWidth: 120 },
-    { prop: 'status', label: '状态', width: 80 }
+    { prop: 'status', label: '状态', width: 120 }
   ],
   monthEmergencies: [
-    { prop: 'time', label: '时间', minWidth: 110 },
-    { prop: 'elderName', label: '老人', minWidth: 90 },
+    { prop: 'time', label: '时间', minWidth: 70 },
+    { prop: 'elderName', label: '老人', minWidth: 70 },
     { prop: 'location', label: '地点', minWidth: 140 },
-    { prop: 'statusText', label: '状态', width: 90 }
+    { prop: 'statusText', label: '状态', width: 120 }
   ]
 }
 
@@ -399,7 +399,6 @@ onUnmounted(() => {
         >已归档</el-button>
       </div>
       
-      <div class="right-exit" @click="goLogin">退出监控中心</div>
     </aside>
 
     <el-dialog v-model="showStatDetail" :title="statDetailTitle" width="720px" append-to-body destroy-on-close>
