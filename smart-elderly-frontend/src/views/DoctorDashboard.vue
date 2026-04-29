@@ -188,6 +188,9 @@ onMounted(() => {
 .doctor-dashboard {
   min-height: 100vh;
   padding-bottom: 24px;
+  padding-left: 20px;
+  margin-left: 20px;
+  max-width: calc(100% - 40px);
 }
 
 .doctor-topbar {

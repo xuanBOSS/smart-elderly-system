@@ -61,7 +61,6 @@ const openDayPatients = async (item) => {
     <div class="page-header">
       <div>
         <h1>我的排班计划</h1>
-        <p>点击某一天可查看该日已预约患者</p>
       </div>
     </div>
 
