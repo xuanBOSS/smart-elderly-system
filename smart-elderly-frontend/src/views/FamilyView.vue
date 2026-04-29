@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { House, DataLine, Bell, Calendar } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/utils/request'
 
 const router = useRouter()
@@ -193,6 +193,45 @@ const loadFamilyAppointments = async (elderId) => {
     familyAppointments.value = []
   } finally {
     loadingAppointments.value = false
+  }
+}
+
+const canCancelFamilyAppointment = (item) => {
+  return item?.appointId && (item.status === '待确认' || item.status === '已确认')
+}
+
+const cancelFamilyAppointment = async (item) => {
+  const elderId = selectedElderId.value
+  if (!elderId || !item?.appointId) {
+    ElMessage.warning('该预约无法取消')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm('确认取消这条预约记录吗？', '提示', {
+      type: 'warning',
+      confirmButtonText: '确认取消',
+      cancelButtonText: '再想想'
+    })
+  } catch {
+    return
+  }
+
+  try {
+    const res = await request.post('/api/family/appointment/cancel', null, {
+      params: { elderId, appointId: item.appointId }
+    })
+    if (res.data.code !== 200) {
+      ElMessage.error(res.data.message || '取消失败，请稍后重试')
+      return
+    }
+    ElMessage.success('预约已取消')
+    await Promise.all([
+      loadFamilyAppointments(elderId),
+      loadActiveBookings(elderId)
+    ])
+  } catch {
+    ElMessage.error('取消失败，请稍后重试')
   }
 }
 
@@ -444,7 +483,17 @@ onUnmounted(() => {
                     <div class="appointment-doctor">{{ item.doctorName || '未知医生' }}</div>
                     <div class="appointment-time">{{ item.createTime || '--' }}</div>
                   </div>
-                  <div :class="['appointment-status', `status-${item.status}`]">{{ item.status || '未知' }}</div>
+                  <div class="appointment-actions">
+                    <div :class="['appointment-status', `status-${item.status}`]">{{ item.status || '未知' }}</div>
+                    <button
+                      v-if="canCancelFamilyAppointment(item)"
+                      type="button"
+                      class="appointment-cancel-btn"
+                      @click="cancelFamilyAppointment(item)"
+                    >
+                      取消
+                    </button>
+                  </div>
                 </div>
               </template>
               <el-empty v-else description="暂无预约记录" :image-size="52" />
@@ -626,6 +675,11 @@ onUnmounted(() => {
 
 .home-fixed-top {
   flex-shrink: 0;
+}
+
+.home-fixed-top .block {
+  padding: 12px;
+  margin-bottom: 8px;
 }
 
 .block {
@@ -867,6 +921,24 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
+.appointment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.appointment-cancel-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(90deg, #ff4d4f 0%, #ff7875 100%);
+  cursor: pointer;
+}
+
 .appointment-status.status-待确认 {
   color: #b45309;
   background: #fff7ed;
@@ -895,7 +967,7 @@ onUnmounted(() => {
 
 .home-lower-panel {
   flex: 1;
-  min-height: 0;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
 }
@@ -912,9 +984,15 @@ onUnmounted(() => {
   border-radius: 10px;
   background: #eaf2fb;
   color: #48627f;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  height: 34px;
+  min-height: 40px;
+  padding: 8px 0;
+  line-height: 1.3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -925,8 +1003,8 @@ onUnmounted(() => {
 
 .home-lower-content {
   flex: 1;
-  min-height: 0;
-  max-height: 220px;
+  min-height: 260px;
+  max-height: none;
   overflow-y: scroll;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
