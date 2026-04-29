@@ -5,10 +5,12 @@ import com.community.smartelderlybackend.common.Result;
 import com.community.smartelderlybackend.dto.ElderlyAppointmentRequest;
 import com.community.smartelderlybackend.entity.FamilyBind;
 import com.community.smartelderlybackend.entity.Appointment;
+import com.community.smartelderlybackend.entity.DoctorSchedule;
 import com.community.smartelderlybackend.entity.EmergencyRecord;
 import com.community.smartelderlybackend.entity.HealthRecords;
 import com.community.smartelderlybackend.entity.User;
 import com.community.smartelderlybackend.mapper.AppointmentMapper;
+import com.community.smartelderlybackend.mapper.DoctorScheduleMapper;
 import com.community.smartelderlybackend.mapper.EmergencyRecordMapper;
 import com.community.smartelderlybackend.mapper.FamilyBindMapper;
 import com.community.smartelderlybackend.mapper.HealthRecordsMapper;
@@ -39,6 +41,8 @@ public class FamilyController {
     private EmergencyRecordMapper emergencyRecordMapper;
     @Autowired
     private AppointmentMapper appointmentMapper;
+    @Autowired
+    private DoctorScheduleMapper doctorScheduleMapper;
     @Autowired
     private com.community.smartelderlybackend.service.ElderlyAppointmentService elderlyAppointmentService;
 
@@ -218,6 +222,55 @@ public class FamilyController {
             resultList.add(map);
         }
         return Result.success(resultList);
+    }
+
+    @PostMapping("/appointment/cancel")
+    @Operation(summary = "家属取消绑定老人的预约")
+    public Result<String> cancelElderAppointment(
+            @RequestParam Long elderId,
+            @RequestParam Long appointId,
+            HttpServletRequest request) {
+        if (elderId == null || appointId == null) {
+            return Result.error("elderId/appointId 不能为空");
+        }
+        if (!isFamilyBoundToElder(request, elderId)) {
+            return Result.error("您未绑定该老人或无权操作");
+        }
+
+        Appointment appointment = appointmentMapper.selectById(appointId);
+        if (appointment == null) {
+            return Result.error("未找到该预约记录");
+        }
+        if (appointment.getUserId() == null || !appointment.getUserId().equals(elderId)) {
+            return Result.error("不能取消不属于该老人的预约");
+        }
+
+        Integer oldStatus = appointment.getStatus();
+        if (oldStatus != null && oldStatus == 2) {
+            return Result.success("预约已取消");
+        }
+
+        // 如果原本是已确认预约，需要回退排班已约人数
+        if (oldStatus != null && oldStatus == 1 && appointment.getAppointTime() != null && appointment.getDoctorId() != null) {
+            LocalDate appointDate = appointment.getAppointTime().toLocalDate();
+            int hour = appointment.getAppointTime().getHour();
+            int timeSlot = hour < 12 ? 0 : 1; // 0上午, 1下午
+
+            DoctorSchedule schedule = doctorScheduleMapper.selectOne(new LambdaQueryWrapper<DoctorSchedule>()
+                    .eq(DoctorSchedule::getDoctorId, appointment.getDoctorId())
+                    .eq(DoctorSchedule::getWorkDate, appointDate)
+                    .eq(DoctorSchedule::getTimeSlot, timeSlot));
+
+            if (schedule != null) {
+                int bookedCount = schedule.getBookedCount() == null ? 0 : schedule.getBookedCount();
+                schedule.setBookedCount(Math.max(bookedCount - 1, 0));
+                doctorScheduleMapper.updateById(schedule);
+            }
+        }
+
+        appointment.setStatus(2);
+        appointmentMapper.updateById(appointment);
+        return Result.success("预约已取消");
     }
 
     @PostMapping("/emergency/resolve")
